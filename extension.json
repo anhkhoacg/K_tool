@@ -1,0 +1,14 @@
+{
+    "builtin": "False",
+    "default_enabled": "True",
+    "type": "extension",
+    "rocket_mode_compatible": "False",
+    "name": "PyRevitPlus",
+    "description": "Extensions for PyRevit",
+    "author": "Le Anh Khoa",
+    "author_profile": "https://github.com/anhkhoacg/",
+    "url": "https://github.com/anhkhoacg/K_tool.git",
+    "website": "https://github.com/anhkhoacg/",
+    "image": "",
+    "dependencies": []
+}
