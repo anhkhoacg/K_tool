@@ -25,7 +25,7 @@ if __name__ == '__main__':
     current_color = app.BackgroundColor
     Black = Color(0, 0, 0)
     White = Color(255, 255, 255)
-    Gray = Color(200, 200, 200)
+    Gray = Color(150, 150, 150)
 
 
     if current_color.Blue == 255 and current_color.Red == 255 and current_color.Green == 255:
@@ -34,3 +34,4 @@ if __name__ == '__main__':
         app.BackgroundColor = Gray
     else:
         app.BackgroundColor = White
+         
