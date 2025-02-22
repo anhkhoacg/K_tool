@@ -2,3 +2,8 @@ layout:
   - Background
   - Workset
   - Dynamo
+  - Rebar
+background:
+  panel: '#ff0000'
+  title: '#00ff00'
+  slideout: '#0000ff'
