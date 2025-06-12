@@ -24,15 +24,11 @@ import os, clr
 clr.AddReference("System")
 from System.Collections.Generic import List
 
-# ╦  ╦╔═╗╦═╗╦╔═╗╔╗ ╦  ╔═╗╔═╗
-# ╚╗╔╝╠═╣╠╦╝║╠═╣╠╩╗║  ║╣ ╚═╗
-#  ╚╝ ╩ ╩╩╚═╩╩ ╩╚═╝╩═╝╚═╝╚═╝ VARIABLES
+#VARIABLES
 # ==================================================
 doc   = __revit__.ActiveUIDocument.Document
 
-# ╔╦╗╔═╗╦╔╗╔
-# ║║║╠═╣║║║║
-# ╩ ╩╩ ╩╩╝╚╝ MAIN
+# MAIN
 # ==================================================
 if __name__ == '__main__':
     all_elements = FilteredElementCollector(doc).WhereElementIsNotElementType().ToElementIds()

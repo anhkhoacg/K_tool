@@ -23,14 +23,14 @@ app = __revit__.Application
 if __name__ == '__main__':
     # COLOURS
     current_color = app.BackgroundColor
-    Black = Color(0, 0, 0)
+    Black = Color(50, 50, 50)
     White = Color(255, 255, 255)
     Gray = Color(150, 150, 150)
 
 
     if current_color.Blue == 255 and current_color.Red == 255 and current_color.Green == 255:
         app.BackgroundColor = Black
-    elif current_color.Blue == 0 and current_color.Red == 0 and current_color.Green == 0:
+    elif current_color.Blue == 50 and current_color.Red == 50 and current_color.Green == 50:
         app.BackgroundColor = Gray
     else:
         app.BackgroundColor = White
