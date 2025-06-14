@@ -1,6 +1,6 @@
-__title__ = " ISO Workset"
+__title__ = " hide Workset"
 __author__ = " Khoa Le"
-__doc__ = " set workset to Isolate"
+__doc__ = " set workset to hide"
 
 
 # Import the necessary modules
@@ -16,58 +16,41 @@ doc = __revit__.ActiveUIDocument.Document
 uidoc = __revit__.ActiveUIDocument
 
 
-def hide_all_user_worksets(doc):
-    """
-    This function collects all user worksets in the given Revit document and sets them to hidden.
-
-    Parameters:
-    doc (Document): The active Revit document.
-    """
-    # Collect all user worksets
+# Define a function to hide all worksets except the workset of the selected elements
+def hide_workset(selection):
+    # Get all worksets in the document
     worksets = FilteredWorksetCollector(doc).OfKind(WorksetKind.UserWorkset)
-
-    # Start a transaction to hide worksets
-    t = Transaction(doc, "Hide Worksets")
+    
+    # Get the workset of the selected elements
+    selected_workset_ids = set()
+    for elem_id in selection:
+        elem = doc.GetElement(elem_id)
+        if elem and elem.WorksetId:
+            selected_workset_ids.add(elem.WorksetId)
+    
+    # Start transaction
+    t = Transaction(doc, "Isolate Workset")
     t.Start()
-
-    # Loop through each workset and set it to hidden
-    for workset in worksets:
-        workset_id = workset.Id
-        doc.ActiveView.SetWorksetVisibility(workset_id, WorksetVisibility.Hidden)
-
-    # Commit the transaction
-    t.Commit()
-
-# Define a function to hide the workset of the selected elements
-def iso_workset(selection):
-    # Start a transaction
-    t = Transaction(doc, 'ISO Workset')
-    t.Start()
-
-    # Loop through the selected elements
-    for eid in selection:
-        # Get the element and its workset id
-        element = doc.GetElement(eid)
-        workset_id = element.WorksetId
-
-        # Get the workset visibility settings for the active view
-        workset_visibility = doc.ActiveView.GetWorksetVisibility(workset_id)
-
-        # If the workset is visible, hide it
-        # if workset_visibility == WorksetVisibility.Visible:
-        doc.ActiveView.SetWorksetVisibility(workset_id, WorksetVisibility.Visible)
-
-    # Commit the transaction
-    t.Commit()
+    
+    try:
+        # Hide all worksets except the selected one
+        for workset in worksets:
+            workset_id = WorksetId(workset.Id.IntegerValue)
+            if workset_id in selected_workset_ids:
+                # Show the selected workset
+                doc.ActiveView.SetWorksetVisibility(workset_id, WorksetVisibility.Visible)
+            else:
+                # Hide other worksets
+                doc.ActiveView.SetWorksetVisibility(workset_id, WorksetVisibility.Hidden)
+        
+        t.Commit()
+    except Exception as e:
+        t.RollBack()
+        TaskDialog.Show("Error", str(e))
 
 
-# Call the function to hide all user worksets
-hide_all_user_worksets(doc)
 # Get the selected elements
-
-
 selection = uidoc.Selection.GetElementIds()
 
-
 # Call the function with the selected elements
-iso_workset(selection)
+hide_workset(selection)

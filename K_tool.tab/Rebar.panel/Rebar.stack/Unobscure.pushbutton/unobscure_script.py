@@ -1,5 +1,5 @@
-__doc__ = "Make all bars obscured in view."
-__title__ = "Obscure Bars"
+__doc__ = "Make all bars Uobscured in view."
+__title__ = "UNObscure Bars"
 __author__ = "Wolinski"
 
 

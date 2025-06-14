@@ -35,13 +35,16 @@ try:
 
     # Make all bars visible
     for rebar in rebars:
-        if hasattr(rebar, 'NumberOfBarPositions'):
-            for i in range(rebar.NumberOfBarPositions):
-                rebar.SetBarHiddenStatus(view, i, False)
+        try:
+            if hasattr(rebar, 'NumberOfBarPositions'):
+                for i in range(rebar.NumberOfBarPositions):
+                    rebar.SetBarHiddenStatus(view, i, False)
+        except:
+            continue  # Skip any bars that cause errors
     
     t.Commit()
     #TaskDialog.Show("Success", "All rebar bars have been made visible in view: {}".format(view.Name))
     
 except Exception as e:
     t.RollBack()
-    TaskDialog.Show("Error", "Failed to show bars in view 1{}: {}".format(view.Name, str(e)))
+    TaskDialog.Show("Error", "Failed to process bars in view {}: {}".format(view.Name, str(e)))
