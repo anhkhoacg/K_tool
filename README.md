@@ -1,43 +1,57 @@
-# K_tool
-Toolbar for Revit by Le Anh Khoa (anhkhoacg@gmail.com)   
-Công cụ được viết/cóp nhặc để tối ưu Revit cho công việc hằng ngày với pyRevit dựa trên thói quen của Khoa (anhkhoacg@gmail.com
+# K_tool / Công cụ K
 
-Để cài đặt công cụ cần có pyRevit, vui lồng cài đặt pyRevit trên https://github.com/eirannejad/pyRevit/releases.
+## Tiếng Việt
 
-Cach cài đặt cơ bản:
+### Giới thiệu
+Công cụ K là tiện ích mở rộng thanh công cụ cho pyRevit, được phát triển bởi Lê Anh Khoa (anhkhoacg@gmail.com) để tối ưu hóa quy trình làm việc với Revit hàng ngày.
 
-1. [ ] Install pyRevit from https://github.com/eirannejad/pyRevit/releases
-2. [ ] WIN+R, gõ 'cmd' để mở **command line**
-3. [ ] Nhập dòng lệnh sau:
-   ----
-   pyrevit extend ui K_tool https://github.com/anhkhoacg/K_tool --dest="C:\thePathWhereYouWantItInstalled" --branch=main
-   ----
-    Chú ý : Chuổi "C:\thePathWhereYouWantItInstalled" có thể bằng thu muc (folder) bạn muốn.
-4. [ ] Khởi động lại Revit sau khi cài đặt.
-* 
-* <<<<<<<<<<<<<<  ✨  ⭐ >>>>>>>>>>>>>>>> */
-****
- What is this? 
-K_tool is/will be a toolbar for the use with pyRevit built by Le Anh Khoa (anhkhoacg@gmail.com). 
+Đây là dự án học tập cá nhân về Revit API và được cung cấp miễn phí không kèm bảo hành.
 
-Who is it for?
+### Cài đặt
 
-Khoa uses the tool for his daily works and also to learn RevitAPI. It is free to use/take but no warranty that it would work.
+#### Yêu cầu
+- pyRevit (cài đặt từ [pyRevit releases](https://github.com/eirannejad/pyRevit/releases))
 
-Directly Installing K_tool
+#### Các bước cài đặt
+1. Mở Command Prompt (WIN+R, gõ 'cmd')
+2. Chạy lệnh sau:
+   ```
+   pyrevit extend ui K_tool https://github.com/anhkhoacg/K_tool --dest="C:\thư_mục_cài_đặt" --branch=main
+   ```
+   Lưu ý: Thay `"C:\thư_mục_cài_đặt"` bằng thư mục bạn muốn
+3. Khởi động lại Revit hoặc dùng nút reload của pyRevit nếu Revit đang mở
 
-----
+### Tính năng
+*Các tính năng sẽ được liệt kê tại đây*
 
-1.  Install pyRevit from https://github.com/eirannejad/pyRevit/releases
+### Giấy phép
+Miễn phí sử dụng không kèm bảo hành :D
 
-2.  WIN+R, then type 'cmd'
+---
 
-3.  In the command line, install the extension with the following command 
-----
+## English
 
-pyrevit extend ui K_tool https://github.com/anhkhoacg/K_tool --dest="C:\thePathWhereYouWantItInstalled" --branch=main
+### About
+K_tool is a Revit toolbar extension for pyRevit developed by Le Anh Khoa (anhkhoacg@gmail.com) to optimize daily Revit workflows.
 
-----
+This is a personal learning project for Revit API and is provided free to use with no warranties.
 
-4.  If Revit was opened, use the reload button of pyRevit
-Noted that "C:\thePathWhereYouWantItInstalled" can change to your directory (folder)
+### Installation
+
+#### Prerequisites
+- pyRevit (install from [pyRevit releases](https://github.com/eirannejad/pyRevit/releases))
+
+#### Installation Steps
+1. Open Command Prompt (WIN+R, type 'cmd')
+   2. Run the following command:
+      ```
+      pyrevit extend ui K_tool https://github.com/anhkhoacg/K_tool --dest="C:\YourInstallPath" --branch=main
+      ```
+      Note: Replace `C:\YourInstallPath` with your desired installation directory
+3. Restart Revit or use pyRevit's reload button if Revit is already open
+
+### Features
+*Tool features will be listed here*
+
+### License
+Free to use with no warranties :P
