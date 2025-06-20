@@ -3,6 +3,7 @@ layout:
   - Workset
   - Dynamo
   - Rebar
+  - Test
 background:
   panel: '#ff0000'
   title: '#00ff00'

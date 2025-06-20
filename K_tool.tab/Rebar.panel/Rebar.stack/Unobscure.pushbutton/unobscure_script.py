@@ -1,13 +1,6 @@
 __doc__ = "Make all bars Uobscured in view."
 __title__ = "UNObscure Bars"
-__author__ = "Wolinski"
-
-
-
-
-
-
-
+__author__ = "Khoa LE"
 
 
 
