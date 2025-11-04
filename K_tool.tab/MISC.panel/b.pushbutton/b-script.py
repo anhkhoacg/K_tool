@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# pyRevit script: Get user input in a single form
+# pyRevit script: renumber rebar in partition
 
 from Autodesk.Revit.DB import *
 from pyrevit import forms
@@ -105,6 +105,9 @@ class InputForm(forms.WPFWindow):
         self.cancel_button.Click += self.window_close
         self.Select_partition.SelectionChanged += self.on_partition_changed
 
+        # Add Apply button handler
+        self.apply_button.Click += self.apply_values
+
         # Store rebar data
         self.rebar_data = []
 
@@ -182,7 +185,7 @@ class InputForm(forms.WPFWindow):
 
         # Find selected rebar data
         self.selected_rebar_data = next(
-            (data for data in self.rebar_data if data['number'] == self.current_number),
+            (data for data in self.rebar_data if str(data['number']) == str(self.current_number)),
             None
         )
 
@@ -197,10 +200,67 @@ class InputForm(forms.WPFWindow):
         except ValueError:
             forms.alert("New rebar number must be an integer.", exitscript=False)
 
+    def apply_values(self, sender, e):
+        """
+        Validate inputs, call renumber_rebar immediately, refresh the rebar numbers list without closing the dialog.
+        """
+        # Read values from form controls
+        current_number = self.Select_rebar_number.SelectedItem
+        # fixed control name (was New_Rebar_Number) -> use New_Rebar_number
+        new_number = self.New_Rebar_number.Text
+        selected_partition = self.Select_partition.SelectedItem
+
+        # Validate new number is integer
+        try:
+            new_int = int(new_number)
+        except ValueError:
+            forms.alert("New rebar number must be an integer.", exitscript=False)
+            return
+
+        if current_number is None:
+            forms.alert("Please select a rebar number.", exitscript=False)
+            return
+
+        # Ensure string comparison matches stored data
+        current_str = str(current_number)
+
+        # Validate current number is integer (schema.ChangeNumber expects numeric original)
+        try:
+            current_int = int(current_str)
+        except ValueError:
+            forms.alert("Selected rebar number is not numeric and cannot be renumbered using this method.",
+                        exitscript=False)
+            return
+
+        # Find a matching rebar entry
+        selected_rebar_data = next(
+            (data for data in self.rebar_data if str(data['number']) == current_str),
+            None
+        )
+
+        if not selected_rebar_data:
+            forms.alert("Please select a valid rebar number.", exitscript=False)
+            return
+
+        # Call renumber function
+        success, message = renumber_rebar(doc, selected_partition, current_int, new_int)
+
+        if success:
+            # Silent on success — refresh the number list to reflect changes
+            self.update_rebar_numbers()
+
+            # Try to select the new number if present
+            new_str = str(new_int)
+            items = list(self.Select_rebar_number.ItemsSource) if self.Select_rebar_number.ItemsSource else []
+            if new_str in items:
+                self.Select_rebar_number.SelectedItem = new_str
+        else:
+            # Show generic warning instead of exception message
+            forms.alert("Rebar number is existed. Please select another new rebar number.", exitscript=False)
+
     def window_close(self, sender, e):
         self.DialogResult = False
         self.Close()
-
 
 def get_user_inputs():
     # Create and show the form
@@ -209,7 +269,8 @@ def get_user_inputs():
 
     # If user cancelled
     if not result:
-        forms.alert("Operation cancelled by user.", exitscript=True)
+        # Silent exit on cancel/close
+        script.exit()
 
     # Validate number inputs
     try:
@@ -225,21 +286,79 @@ def get_user_inputs():
     }
 
 
-# Main execution
-try:
-    user_inputs = get_user_inputs()
+def renumber_rebar(doc, partition_name, num, new_num):
+    """
+    Attempt to renumber rebar using the Revit numbering schema API.
+    This will:
+      - Get the Rebar numbering schema
+      - Start a Transaction
+      - Call schema.ChangeNumber(partition_name, num, new_num)
+      - Commit on success or RollBack on failure
+    Returns (success: bool, message: str)
+    """
+    try:
+        schema = NumberingSchema.GetNumberingSchema(
+            doc,
+            NumberingSchemaTypes.StructuralNumberingSchemas.Rebar
+        )
+    except Exception as e:
+        return False, "Failed to obtain Rebar numbering schema: {}".format(e)
 
-    # Show the results
-    forms.alert(
-        "You entered:\n"
-        "Partition: {0}\n"
-        "Current Rebar Number: {1}\n"
-        "New Rebar Number: {2}".format(
-            user_inputs['partition'],
-            user_inputs['current_number'],
-            user_inputs['new_number']
-        ),
-        title="Summary"
-    )
+    # Ensure we run the change inside a transaction
+    try:
+        t = Transaction(doc, "Renumber Rebar")
+        t.Start()
+        try:
+            # ChangeNumber expects the partition name and numeric values
+            schema.ChangeNumber(partition_name, int(num), int(new_num))
+            t.Commit()
+            return True, "Renumbered {} -> {} in partition '{}'".format(num, new_num, partition_name)
+        except Exception as ex_change:
+            try:
+                if t.GetStatus() == TransactionStatus.Started:
+                    t.RollBack()
+            except Exception:
+                pass
+            return False, "ChangeNumber failed: {}".format(ex_change)
+    except Exception as ex_tx:
+        return False, "Transaction error: {}".format(ex_tx)
+
+
+# Main execution - show form, validate and attempt renumber inside a retry loop.
+# If renumber fails, prompt user to select another new rebar number (re-open form).
+try:
+    while True:
+        input_form = InputForm()
+        result = input_form.show_dialog()
+
+        # If user cancelled, exit silently
+        if not result:
+            script.exit()
+
+        # Validate number inputs
+        try:
+            current_num = int(input_form.current_number)
+            new_num = int(input_form.new_number)
+        except Exception:
+            forms.alert("Please enter valid integers for current and new rebar numbers.", exitscript=False)
+            # Re-open the form to let user correct values
+            continue
+
+        # Attempt renumber
+        success, message = renumber_rebar(
+            doc,
+            input_form.selected_partition,
+            current_num,
+            new_num
+        )
+
+        if success:
+            # Silent on success — exit loop and finish
+            break
+        else:
+            # Ask user to select another new rebar number and re-open the form
+            forms.alert(" Rebar Number is exist. Please select another new rebar number.", exitscript=False)
+            # Loop will re-open the dialog
+
 except Exception as e:
-    forms.alert("An error occurred: {}".format(str(e)), exitscript=True)
+    forms.alert("An unexpected error occurred: {}".format(str(e)), exitscript=True)
