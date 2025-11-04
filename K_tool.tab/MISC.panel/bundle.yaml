@@ -1,0 +1,7 @@
+layout:
+  - ACC_EU
+  - Grid Flip
+background:
+  panel: '#008080'
+  title: '#ffd447'
+  slideout: '#0000ff'
