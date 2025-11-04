@@ -3,12 +3,7 @@
 __title__ = 'Flip Grids'
 __author__ = 'Tay Othman, AIA'
 
-import getpass
-import os
-import os
-import sys
 from Autodesk.Revit.DB import *
-from datetime import datetime
 from pyrevit import forms, revit, DB
 
 # Set the active Revit application and document
