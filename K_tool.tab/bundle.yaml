@@ -1,11 +1,9 @@
 layout:
   - Background
   - Workset
-  - Dynamo
   - Rebar
-  - ULR
-  - Test
+  - MISC
 background:
   panel: '#ff0000'
   title: '#00ff00'
-  slideout: '#0000ff'
+  slideout: '#0055ff'
