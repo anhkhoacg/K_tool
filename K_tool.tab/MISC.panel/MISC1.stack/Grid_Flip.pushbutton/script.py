@@ -1,5 +1,5 @@
 """Select Multiple Grids and turn off the bubble visibility on one side and turn on the bubble visibility on the other side"""
-# pylint: disable=import-error,invalid-name
+"""# pylint: disable=import-error,invalid-name"""
 __title__ = 'Flip Grids'
 __author__ = 'Tay Othman, AIA'
 

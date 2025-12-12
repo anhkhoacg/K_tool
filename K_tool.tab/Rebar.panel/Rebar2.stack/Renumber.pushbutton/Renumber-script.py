@@ -1,6 +1,20 @@
 # -*- coding: utf-8 -*-
 # pyRevit script: renumber rebar in partition
 
+# Analysis:
+# Purpose: UI to renumber rebars by partition using Revit's numbering schema.
+# Observations / potential issues:
+# - "Rebar" number matching and partition lookups rely on parameter names; consider handling case-insensitive parameter names or built-in fallbacks (already partly addressed).
+# - Name comparisons and numeric parsing assume integers; code alerts when values are non-numeric but could be more tolerant.
+# - get_rebar_numbers_in_partition and other functions create new FilteredElementCollector calls repeatedly; consider caching if performance becomes an issue.
+# - The script creates InputForm twice (get_user_inputs unused & main loop creates InputForm directly). Consider consolidating to a single flow to avoid duplication.
+# - Silent exception handling hides specific API failures (ChangeNumber). Consider logging failed element ids or exception messages for debugging.
+# - Category checks use Category.Id.IntegerValue vs int(BuiltInCategory.OST_Rebar) — this works but using ElementId(int(...)) comparisons or utility helpers may be clearer.
+# Suggested minimal improvements (not applied here to avoid behavior changes):
+#  - Make numeric checks robust (handle leading zeros, whitespace).
+#  - Make "Partition" and "Number" lookup case-insensitive, and prefer BuiltInParameter lookups when possible.
+#  - Log or collect failed operations to present to the user after the transaction.
+
 from Autodesk.Revit.DB import *
 from pyrevit import forms
 from pyrevit import revit, DB
@@ -54,6 +68,45 @@ def get_all_rebar_partitions():
     return sorted(list(partitions))
 
 
+def get_rebar_number_digits():
+    """
+    Try to obtain the rebar-number digit count from the NumberingSchema.
+    If the API does not expose a digits property, infer from existing rebar numbers
+    by using the maximum numeric string length found (fallback).
+    Returns an integer >= 0 (0 means 'no fixed padding').
+    """
+    # Try schema attribute heuristics first
+    try:
+        schema = NumberingSchema.GetNumberingSchema(
+            doc,
+            NumberingSchemaTypes.StructuralNumberingSchemas.Rebar
+        )
+        # common possible attribute names (best-effort)
+        for attr in ('Digits', 'NumberDigits', 'NumberOfDigits', 'DigitCount'):
+            val = getattr(schema, attr, None)
+            if isinstance(val, int) and val >= 0:
+                return val
+    except Exception:
+        pass
+
+    # Fallback: infer from existing rebar numbers (max string length of numeric-looking values)
+    try:
+        all_rebars = FilteredElementCollector(doc).OfCategory(
+            BuiltInCategory.OST_Rebar).WhereElementIsNotElementType().ToElements()
+        max_len = 0
+        for rebar in all_rebars:
+            num = get_param_value(rebar, "Number")
+            if not num:
+                continue
+            s = str(num).strip()
+            # consider strings that contain digits (e.g. "08", "8"); count full length to preserve leading zeros
+            if any(ch.isdigit() for ch in s):
+                max_len = max(max_len, len(s))
+        return max_len if max_len > 0 else 0
+    except Exception:
+        return 0
+
+
 def get_rebar_numbers_in_partition(partition):
     """Get all rebar numbers in a specific partition"""
     all_rebars = FilteredElementCollector(doc).OfCategory(
@@ -65,14 +118,27 @@ def get_rebar_numbers_in_partition(partition):
         forms.alert("No rebars found while getting numbers!")
         return []
 
+    # determine padding digits for display
+    digits = get_rebar_number_digits()
+
     for rebar in all_rebars:
         current_partition = get_param_value(rebar, "Partition")
         if current_partition == partition:
             number = get_param_value(rebar, "Number")
             if number:
-                # Store both the number and ElementId for later use
+                num_str = str(number).strip()
+                # try to parse integer value; for non-numeric keep original string and skip int
+                try:
+                    num_int = int(num_str)
+                    padded = str(num_int).zfill(digits) if digits and digits > 0 else str(num_int)
+                except Exception:
+                    num_int = None
+                    padded = num_str
+                # Store raw, int (or None), padded display and element info
                 rebar_data.append({
-                    'number': str(number),
+                    'number': num_str,
+                    'int': num_int,
+                    'padded': padded,
                     'id': rebar.Id.IntegerValue,
                     'rebar': rebar
                 })
@@ -81,8 +147,9 @@ def get_rebar_numbers_in_partition(partition):
     if not rebar_data:
         forms.alert("No rebar numbers found in partition: " + partition)
 
-    # Sort by number
-    sorted_data = sorted(rebar_data, key=lambda x: int(x['number']))
+    # Sort by integer when possible, otherwise by string
+    sorted_data = sorted(rebar_data,
+                         key=lambda x: (x['int'] is None, x['int'] if x['int'] is not None else x['number']))
     return sorted_data
 
 
@@ -140,11 +207,25 @@ class InputForm(forms.WPFWindow):
 
         # If a rebar was selected when the form opened, apply that number selection now
         if hasattr(self, 'default_current_number') and self.rebar_data:
-            # ItemsSource contains unique number strings; check against that list
-            unique_numbers = [str(n) for n in
-                              sorted({int(d['number']) for d in self.rebar_data})] if self.rebar_data else []
-            if self.default_current_number in unique_numbers:
-                self.Select_rebar_number.SelectedItem = self.default_current_number
+            # Determine digits/padded form from the data set
+            # Build list of padded strings from data
+            unique_padded = []
+            for d in self.rebar_data:
+                if d['padded'] not in unique_padded:
+                    unique_padded.append(d['padded'])
+
+            # Normalize default_current_number by integer if possible, else compare raw string
+            try:
+                default_int = int(str(self.default_current_number).strip())
+                # format with detected padding if present in data
+                # find digits from data (all padded entries with numeric ints will have same length)
+                digits = len(next((p for p in unique_padded if p.isdigit()), str(default_int)))
+                default_padded = str(default_int).zfill(digits) if digits and digits > 0 else str(default_int)
+            except Exception:
+                default_padded = str(self.default_current_number)
+
+            if default_padded in unique_padded:
+                self.Select_rebar_number.SelectedItem = default_padded
 
         # Set up default value for new rebar number
         self.New_Rebar_number.Text = ""
@@ -158,19 +239,20 @@ class InputForm(forms.WPFWindow):
             # Get rebar data for the selected partition
             self.rebar_data = get_rebar_numbers_in_partition(selected_partition)
 
-            # Update the dropdown with unique numbers (numerically sorted)
+            # Update the dropdown with unique numbers (numerically sorted / padded)
             if self.rebar_data:
-                # build a set of integer numbers (fall back to string if parsing fails)
-                unique_ints = set()
-                unique_others = set()
+                unique_padded = []
+                unique_others = []
                 for d in self.rebar_data:
-                    try:
-                        unique_ints.add(int(d['number']))
-                    except Exception:
-                        unique_others.add(str(d['number']))
+                    if d['int'] is not None:
+                        if d['padded'] not in unique_padded:
+                            unique_padded.append(d['padded'])
+                    else:
+                        if d['number'] not in unique_others:
+                            unique_others.append(d['number'])
 
-                # create sorted list: numeric first, then other strings
-                numbers_list = [str(n) for n in sorted(unique_ints)]
+                # numeric (padded) are already in numeric order from sorted_data
+                numbers_list = unique_padded[:]
                 if unique_others:
                     numbers_list.extend(sorted(unique_others))
 
@@ -183,11 +265,27 @@ class InputForm(forms.WPFWindow):
         self.new_number = self.New_Rebar_number.Text
         self.selected_partition = self.Select_partition.SelectedItem
 
-        # Find selected rebar data
-        self.selected_rebar_data = next(
-            (data for data in self.rebar_data if str(data['number']) == str(self.current_number)),
-            None
-        )
+        # Find selected rebar data: match by integer when possible, else by padded/raw string
+        selected_rebar_data = None
+        try:
+            sel_int = int(str(self.current_number).strip())
+        except Exception:
+            sel_int = None
+
+        if sel_int is not None:
+            selected_rebar_data = next(
+                (data for data in self.rebar_data if data['int'] == sel_int),
+                None
+            )
+        else:
+            # fallback to matching padded or raw string
+            selected_rebar_data = next(
+                (data for data in self.rebar_data if
+                 data['padded'] == str(self.current_number) or data['number'] == str(self.current_number)),
+                None
+            )
+
+        self.selected_rebar_data = selected_rebar_data
 
         # Validate new rebar number is an integer
         try:
@@ -221,36 +319,41 @@ class InputForm(forms.WPFWindow):
             forms.alert("Please select a rebar number.", exitscript=False)
             return
 
-        # Ensure string comparison matches stored data
-        current_str = str(current_number)
-
-        # Validate current number is integer (schema.ChangeNumber expects numeric original)
+        # Determine selected current as integer when possible
         try:
-            current_int = int(current_str)
-        except ValueError:
-            forms.alert("Selected rebar number is not numeric and cannot be renumbered using this method.",
-                        exitscript=False)
-            return
+            current_int = int(str(current_number).strip())
+        except Exception:
+            current_int = None
 
-        # Find a matching rebar entry
-        selected_rebar_data = next(
-            (data for data in self.rebar_data if str(data['number']) == current_str),
-            None
-        )
+        # Find a matching rebar entry; prefer integer match
+        if current_int is not None:
+            selected_rebar_data = next(
+                (data for data in self.rebar_data if data['int'] == current_int),
+                None
+            )
+        else:
+            selected_rebar_data = next(
+                (data for data in self.rebar_data if
+                 data['padded'] == str(current_number) or data['number'] == str(current_number)),
+                None
+            )
 
         if not selected_rebar_data:
             forms.alert("Please select a valid rebar number.", exitscript=False)
             return
 
         # Call renumber function
-        success, message = renumber_rebar(doc, selected_partition, current_int, new_int)
+        success, message = renumber_rebar(doc, selected_partition,
+                                          current_int if current_int is not None else selected_rebar_data.get('number'),
+                                          new_int)
 
         if success:
             # Silent on success — refresh the number list to reflect changes
             self.update_rebar_numbers()
 
-            # Try to select the new number if present
-            new_str = str(new_int)
+            # Try to select the new number if present (use padded display)
+            digits = get_rebar_number_digits()
+            new_str = str(new_int).zfill(digits) if digits and digits > 0 else str(new_int)
             items = list(self.Select_rebar_number.ItemsSource) if self.Select_rebar_number.ItemsSource else []
             if new_str in items:
                 self.Select_rebar_number.SelectedItem = new_str

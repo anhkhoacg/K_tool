@@ -1,0 +1,55 @@
+﻿
+<Window x:Class="FilterSelection.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="User Input" Height="500" Width="400">
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Search Box -->
+        <TextBox x:Name="SearchBox" Grid.Row="0" Margin="0,0,0,5" Height="25" 
+                 PlaceholderText="Search filters..." />
+
+        <!-- Scrollable Checkbox List -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel x:Name="FilterPanel" Orientation="Vertical">
+                <!-- Example CheckBoxes -->
+                <CheckBox Content="Filter: Connected Analytical Nodes"/>
+                <CheckBox Content="Filter: Section Type"/>
+                <CheckBox Content="Filter: Filter 1"/>
+                <CheckBox Content="Filter: Filter 2"/>
+                <CheckBox Content="Filter: GM_non_Cope unit"/>
+                <CheckBox Content="Filter: GM-BW-Workset-Zone 4_non"/>
+                <CheckBox Content="Filter: GM_non_Layer5"/>
+                <CheckBox Content="Filter: GM_non_Layer4"/>
+                <CheckBox Content="Filter: BH6189_GM_Mark_non"/>
+                <CheckBox Content="Filter: GM_Workset_Zone3_non"/>
+                <CheckBox Content="Filter: BH6189_GM_Position_Layer1"/>
+                <CheckBox Content="Filter: BH6189_View_Position_PC6_non"/>
+                <CheckBox Content="Filter: Rock_Bund"/>
+                <CheckBox Content="Filter: FCB"/>
+                <CheckBox Content="Filter: RCB"/>
+                <CheckBox Content="Filter: LADDER"/>
+                <CheckBox Content="Filter: BOLLARD"/>
+                <CheckBox Content="Filter: FENDER"/>
+                <CheckBox Content="Filter: GIRD SUB"/>
+                <CheckBox Content="Filter: RHD_Section_Sheetnumber"/>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Buttons Row -->
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Stretch" Margin="0,5,0,5">
+            <Button Content="Check All" Width="100" Margin="5"/>
+            <Button Content="Uncheck All" Width="100" Margin="5"/>
+            <Button Content="Toggle All" Width="100" Margin="5"/>
+        </StackPanel>
+
+        <!-- Select Filters Button -->
+        <Button Grid.Row="3" Content="Select Filters" Height="30" HorizontalAlignment="Stretch"/>
+    </Grid>
+</Window>

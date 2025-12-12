@@ -131,9 +131,14 @@ try:
         except Exception:
             pass
 
-        for name, ws in all_items:
-            if ft and ft not in name.lower():
-                continue
+        # build filtered list and sort it (case-insensitive)
+        if ft:
+            filtered = [(name, ws) for (name, ws) in all_items if ft in name.lower()]
+        else:
+            filtered = list(all_items)
+        filtered.sort(key=lambda x: x[0].lower())
+
+        for name, ws in filtered:
             item = ListBoxItem()
             panel = StackPanel()
             panel.Orientation = System.Windows.Controls.Orientation.Horizontal

@@ -28,7 +28,11 @@ try:
             return "Filter: {}".format(self.item.Name)
 
 
-    filters = FilteredElementCollector(doc).OfClass(ParameterFilterElement)
+    # collect filters into a Python list and sort by Name (case-insensitive)
+    filters = list(FilteredElementCollector(doc).OfClass(ParameterFilterElement))
+    filters.sort(key=lambda f: (f.Name or "").lower())
+
+    # create TemplateListItem wrappers in sorted order
     ops = [FilterItem(f) for f in filters]
 
     if not ops:
@@ -45,21 +49,29 @@ try:
                 else:
                     selected_elements.append(entry)
 
-            # Add each selected filter to the current (active) view inside a Transaction
+            # Only add filters that are not already applied to the active view
             t = Transaction(doc, "Add Parameter Filters to View")
             try:
                 t.Start()
                 added_results = []
+                added_elements = []
+                # snapshot existing filter ids for quick membership checks
+                existing_ids = set(doc.ActiveView.GetFilters())
                 for e in selected_elements:
                     try:
-                        added_flag = doc.ActiveView.AddFilter(e.Id)
-                        added_results.append((e.Name, bool(added_flag)))
+                        if e.Id in existing_ids:
+                            # already present: skip
+                            added_results.append((e.Name, False))
+                        else:
+                            added_flag = doc.ActiveView.AddFilter(e.Id)
+                            added_results.append((e.Name, bool(added_flag)))
+                            if added_flag:
+                                added_elements.append(e)
+                                existing_ids.add(e.Id)  # keep snapshot updated
                     except Exception as ex:
-                        # report and re-raise so caller sees the failure
                         import traceback
 
-                        print
-                        'Failed to add filter "{}" to view: {}'.format(e.Name, ex)
+                        print('Failed to add filter "{}" to view: {}'.format(e.Name, ex))
                         traceback.print_exc()
                         raise
                 t.Commit()
@@ -72,28 +84,25 @@ try:
                     pass
                 raise
 
-            # set Revit UI selection to the chosen filters (do this after adding them)
-            ids = List[ElementId]([e.Id for e in selected_elements])
-            try:
-                revit.uidoc.Selection.SetElementIds(ids)
-            except Exception as e:
-                # Report and re-raise so caller can handle the failure
-                import traceback
+            # select only the filters that were actually added
+            if added_elements:
+                ids = List[ElementId]([e.Id for e in added_elements])
+                try:
+                    revit.uidoc.Selection.SetElementIds(ids)
+                except Exception as e:
+                    import traceback
 
-                print
-                'Failed to set selection:', e
-                traceback.print_exc()
-                raise
+                    print('Failed to set selection:', e)
+                    traceback.print_exc()
+                    raise
 
-            # feedback which filters were added and whether AddFilter returned True
-            print
-            'Selected filters and add results:', added_results
+            # feedback which filters were added (True) or skipped (False)
+            print('Selected filters and add results:', added_results)
 except Exception:
     # Fallback when pyrevit.forms or revit context is not available (IDE linting / unit tests)
     import traceback
 
-    print
-    'Could not run pyrevit UI. Error:'
+    print('Could not run pyrevit UI. Error:')
     traceback.print_exc()
     # Re-raise the exception so the caller receives it
     raise
