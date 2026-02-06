@@ -2,3 +2,7 @@ layout:
     -   hideWorkset
     -   ShowAllWorkset
     -   IsolateWorkset
+background:
+  panel: '#008080'
+  title: '#ffd447'
+  slideout: '#0000ff'

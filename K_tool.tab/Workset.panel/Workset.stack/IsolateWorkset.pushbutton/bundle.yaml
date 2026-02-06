@@ -1,4 +1,5 @@
-help_url: '{{docpath}}pAM-ARIXXLw'
 title: Isolate WorkSet
+
 tooltip: isolate  Selected elemnets' Workset
+
 context: Selection

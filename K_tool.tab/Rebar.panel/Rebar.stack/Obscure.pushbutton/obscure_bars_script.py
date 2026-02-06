@@ -4,19 +4,11 @@ __author__ = "Wolinski"
 
 
 
-
-
-
-
-
-
-
 import clr
 clr.AddReference('RevitAPI')
 clr.AddReference('RevitAPIUI')
 from Autodesk.Revit.DB import *
 from Autodesk.Revit.DB.Structure import *
-from Autodesk.Revit.UI import TaskDialog
 
 doc = __revit__.ActiveUIDocument.Document
 uidoc = __revit__.ActiveUIDocument

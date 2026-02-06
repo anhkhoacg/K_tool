@@ -1,9 +1,9 @@
 layout:
-  - Background
+  - WIP
   - Workset
   - Rebar
   - MISC
-  - OOSterweel
+#  - OOSterweel
 background:
   panel: '#ff0000'
   title: '#00ff00'

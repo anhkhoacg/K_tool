@@ -9,7 +9,7 @@ import clr
 
 # Revit API
 clr.AddReference('RevitAPI')
-from Autodesk.Revit.DB import FilteredWorksetCollector, WorksetKind, Workset, Transaction, WorksetVisibility
+from Autodesk.Revit.DB import FilteredWorksetCollector, WorksetKind, Transaction, WorksetVisibility
 
 # WPF/XAML
 clr.AddReference('PresentationFramework')

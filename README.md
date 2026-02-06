@@ -3,7 +3,9 @@
 ## English
 
 ### About
-K_tool is a Revit toolbar extension for pyRevit developed by Le Anh Khoa (anhkhoacg@gmail.com) to optimize daily Revit workflows.
+
+K_tool is a Revit toolbar extension for pyRevit developed by Le Anh Khoa (anhkhoacg@gmail.com) to optimize his daily
+Revit workflows.
 
 This is a personal learning project for Revit API and is provided free to use with no warranties.
 

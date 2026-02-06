@@ -13,14 +13,14 @@ To-Do:
 _____________________________________________________________________
 Author: Erik Frits"""
 
+# .NET Imports
+import clr
 # ╦╔╦╗╔═╗╔═╗╦═╗╔╦╗╔═╗
 # ║║║║╠═╝║ ║╠╦╝ ║ ╚═╗
 # ╩╩ ╩╩  ╚═╝╩╚═ ╩ ╚═╝ IMPORTS
 # ==================================================
 from Autodesk.Revit.DB import *
 
-# .NET Imports
-import os, clr
 clr.AddReference("System")
 from System.Collections.Generic import List
 
