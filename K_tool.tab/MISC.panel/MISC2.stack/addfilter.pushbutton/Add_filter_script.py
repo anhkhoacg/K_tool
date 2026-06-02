@@ -7,13 +7,16 @@ __doc__ = """Add filter to current view
 import clr
 
 clr.AddReference('RevitAPI')
+clr.AddReference('RevitAPIUI')
 from Autodesk.Revit.DB import FilteredElementCollector, ParameterFilterElement, ElementId, Transaction
+from Autodesk.Revit.UI import RevitCommandId, PostableCommand
 from System.Collections.Generic import List
 
 try:
     from pyrevit import revit, forms
 
     doc = revit.doc
+    uidoc = revit.uidoc
 
 
     class FilterItem(forms.TemplateListItem):
@@ -88,13 +91,25 @@ try:
             if added_elements:
                 ids = List[ElementId]([e.Id for e in added_elements])
                 try:
-                    revit.uidoc.Selection.SetElementIds(ids)
+                    uidoc.Selection.SetElementIds(ids)
                 except Exception as e:
                     import traceback
-
                     print('Failed to set selection:', e)
                     traceback.print_exc()
                     raise
+
+                # Open Visibility/Graphics dialog after adding filters
+                try:
+                    vg_cmd = RevitCommandId.LookupPostableCommandId(PostableCommand.VisibilityGraphics)
+                    if vg_cmd and uidoc.Application.CanPostCommand(vg_cmd):
+                        uidoc.Application.PostCommand(vg_cmd)
+                    else:
+                        print('Visibility/Graphics command is not available in this context.')
+                except Exception as e:
+                    import traceback
+
+                    print('Failed to open Visibility/Graphics dialog:', e)
+                    traceback.print_exc()
 
             # feedback which filters were added (True) or skipped (False)
             print('Selected filters and add results:', added_results)
