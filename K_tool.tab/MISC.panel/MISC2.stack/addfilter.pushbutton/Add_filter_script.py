@@ -9,7 +9,6 @@ import clr
 clr.AddReference('RevitAPI')
 clr.AddReference('RevitAPIUI')
 from Autodesk.Revit.DB import FilteredElementCollector, ParameterFilterElement, ElementId, Transaction
-from Autodesk.Revit.UI import RevitCommandId, PostableCommand
 from System.Collections.Generic import List
 
 try:
@@ -66,11 +65,13 @@ try:
                             # already present: skip
                             added_results.append((e.Name, False))
                         else:
-                            added_flag = doc.ActiveView.AddFilter(e.Id)
-                            added_results.append((e.Name, bool(added_flag)))
-                            if added_flag:
-                                added_elements.append(e)
-                                existing_ids.add(e.Id)  # keep snapshot updated
+                            # Revit API AddFilter does not return a reliable success flag in IronPython.
+                            doc.ActiveView.AddFilter(e.Id)
+                            # Hide newly added filters in the current view.
+                            doc.ActiveView.SetFilterVisibility(e.Id, False)
+                            added_results.append((e.Name, True))
+                            added_elements.append(e)
+                            existing_ids.add(e.Id)  # keep snapshot updated
                     except Exception as ex:
                         import traceback
 
@@ -98,21 +99,6 @@ try:
                     traceback.print_exc()
                     raise
 
-                # Open Visibility/Graphics dialog after adding filters
-                try:
-                    vg_cmd = RevitCommandId.LookupPostableCommandId(PostableCommand.VisibilityGraphics)
-                    if vg_cmd and uidoc.Application.CanPostCommand(vg_cmd):
-                        uidoc.Application.PostCommand(vg_cmd)
-                    else:
-                        print('Visibility/Graphics command is not available in this context.')
-                except Exception as e:
-                    import traceback
-
-                    print('Failed to open Visibility/Graphics dialog:', e)
-                    traceback.print_exc()
-
-            # feedback which filters were added (True) or skipped (False)
-            print('Selected filters and add results:', added_results)
 except Exception:
     # Fallback when pyrevit.forms or revit context is not available (IDE linting / unit tests)
     import traceback

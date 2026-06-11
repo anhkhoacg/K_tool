@@ -1,11 +1,10 @@
 layout:
   - WIP
+  - Button creation
   - Workset
   - Rebar
   - MISC
-  - Ultil
-  - OOSterweel
 background:
-  panel: '#ff0000'
-  title: '#00ff00'
-  slideout: '#0055ff'
+  panel: #ff0000
+  title: #00ff00
+  slideout: #0055ff
