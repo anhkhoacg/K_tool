@@ -1,3 +1,0 @@
-title: Get CoG
-tooltip: Get Center of Gravity of Selected Elements. Each element's CoG will be added to the current selection, and the CoG points will be highlighted in the view.
-context: Selection
