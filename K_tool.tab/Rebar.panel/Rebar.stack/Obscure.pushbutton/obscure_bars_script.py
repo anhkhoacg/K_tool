@@ -1,6 +1,7 @@
 __doc__ = "Make all bars obscured in view."
 __title__ = "Obscure Bars"
-__author__ = "Wolinski"
+__author__ = "Khoa LE"
+__helpurl__ = ""
 
 
 
@@ -11,16 +12,14 @@ from Autodesk.Revit.DB import *
 from Autodesk.Revit.DB.Structure import *
 
 doc = __revit__.ActiveUIDocument.Document
-uidoc = __revit__.ActiveUIDocument
 view = doc.ActiveView
 
 # Collect rebar elements visible in current view
-rebar_collector = FilteredElementCollector(doc, view.Id).OfClass(Rebar)
+rebar_list = list(FilteredElementCollector(doc, view.Id).OfClass(Rebar))
 
-x = False
 
 t = Transaction(doc, "ObscuredBars")
 t.Start()
-for rebar in rebar_collector:
-    rebar.SetUnobscuredInView(view, x)
+for rebar in rebar_list:
+    rebar.SetUnobscuredInView(view, False)
 t.Commit()
