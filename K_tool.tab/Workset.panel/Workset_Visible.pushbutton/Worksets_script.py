@@ -198,6 +198,7 @@ try:
         if doc is None:
             show_message("Worksets", "No Revit document available.")
             return
+        tr = None
         try:
             try:
                 target_view = revit.active_view
@@ -205,18 +206,16 @@ try:
                 target_view = doc.ActiveView
             tr = Transaction(doc, "Set workset visibility")
             tr.Start()
-            for ws in selected_ws:
-                try:
-                    target_view.SetWorksetVisibility(ws.Id, visibility_value)
-                except Exception:
-                    pass
-            tr.Commit()
-            show_message("Worksets", "Visibility updated for selected worksets in the active view.")
-        except Exception as ex:
             try:
-                tr.RollBack()
+                for ws in selected_ws:
+                    target_view.SetWorksetVisibility(ws.Id, visibility_value)
+                tr.Commit()
+                show_message("Worksets", "Visibility updated for selected worksets in the active view.")
             except Exception:
-                pass
+                if tr.IsActive:
+                    tr.RollBack()
+                raise
+        except Exception as ex:
             show_message("Error", "Failed to update workset visibility: {}".format(str(ex)))
 
 
@@ -240,6 +239,19 @@ try:
 
 
     def on_cancel(sender, args):
+        close_dialog(False)
+
+
+    def close_dialog(dialog_result=None):
+        if window is None:
+            return
+        if dialog_result is not None:
+            try:
+                # If shown modally, DialogResult closes the dialog deterministically.
+                window.DialogResult = dialog_result
+                return
+            except Exception:
+                pass
         try:
             window.Close()
         except Exception:
@@ -249,11 +261,13 @@ try:
     def on_hide(sender, args):
         sel = get_checked_worksets()
         set_visibility(sel, WorksetVisibility.Hidden)
+        close_dialog(True)
 
 
     def on_show(sender, args):
         sel = get_checked_worksets()
         set_visibility(sel, WorksetVisibility.Visible)
+        close_dialog(True)
 
 
     # wire events (some hosts accept +=)

@@ -2,7 +2,7 @@
 __title__ = "change Background"
 __author__ = "Khoa"
 __helpurl__ = ""
-__doc__ = """Version = 1.0
+__doc__ = """Version = 1.1
 Date    = 10.10.2023
 _____________________________________________________________________
 Description:
@@ -23,13 +23,16 @@ app = __revit__.Application
 if __name__ == '__main__':
     # COLOURS
     current_color = app.BackgroundColor
-    Black = Color(0, 0, 0)
-    White = Color(255, 255, 255)
-    Gray = Color(150, 150, 150)
-
-    if current_color.Blue == 255 and current_color.Red == 255 and current_color.Green == 255:
-        app.BackgroundColor = Black
-    elif current_color.Blue == 0 and current_color.Red == 0 and current_color.Green == 0:
-        app.BackgroundColor = Gray
-    else:
-        app.BackgroundColor = White
+    colors = [Color(0, 0, 0), Color(200, 200, 200), Color(255, 255, 255)]
+    
+    # Convert current color to tuple for easier comparison
+    current = (current_color.Red, current_color.Green, current_color.Blue)
+    color_tuples = [(0, 0, 0), (200, 200, 200), (255, 255, 255)]
+    
+    # Find current color index and cycle to next
+    try:
+        idx = color_tuples.index(current)
+        app.BackgroundColor = colors[(idx + 1) % len(colors)]
+    except ValueError:
+        # If current color doesn't match, default to black
+        app.BackgroundColor = colors[0]
