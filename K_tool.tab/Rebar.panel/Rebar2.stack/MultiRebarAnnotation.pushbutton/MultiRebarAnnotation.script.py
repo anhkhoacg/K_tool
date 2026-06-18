@@ -77,6 +77,8 @@ def _safe_name(el):
         return "<unnamed>"
 
 
+mra_types = sorted(mra_types, key=lambda t: (_safe_name(t).lower(), int(t.Id.IntegerValue)))
+
 choices = ["{0} (Id:{1})".format(_safe_name(t), int(t.Id.IntegerValue)) for t in mra_types]
 
 selected_type = None
@@ -135,6 +137,13 @@ except Exception:
 #####
 
 with revit.Transaction("Create_RebarGroup_Annotations"):
+    dimension_spacing = 4.0 * float(view.Scale)/308.4 #feet to match 4mm at scale 1:100, adjust as needed for different spacing or scale
+    distribute_direction = view.ViewDirection.CrossProduct(lineDirection)
+    try:
+        distribute_direction = distribute_direction.Normalize()
+    except Exception:
+        distribute_direction = view.UpDirection
+
     for i, rebar in enumerate(rebar_groups):
         # Build a List[ElementId] from the single rebar element (replace invalid GetElementId call)
         rebar_ids = List[DB.ElementId]([rebar.Id])
@@ -143,9 +152,9 @@ with revit.Transaction("Create_RebarGroup_Annotations"):
 
         options = DB.MultiReferenceAnnotationOptions(mra_type)
         options.TagHasLeader = True
-        options.TagHeadPosition = center_VIEW
+        options.TagHeadPosition = center_VIEW + (distribute_direction * (i * dimension_spacing))
         # set the dimension line origin to the picked point (or view center fallback)
-        options.DimensionLineOrigin = center_VIEW
+        options.DimensionLineOrigin = center_VIEW + (distribute_direction * (i * dimension_spacing))
         options.DimensionLineDirection = lineDirection
         options.DimensionPlaneNormal = view.ViewDirection
         options.SetElementsToDimension(rebar_ids)

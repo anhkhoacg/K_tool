@@ -1,3 +1,4 @@
+
 # -*- coding: utf-8 -*-
 # pyRevit script: renumber rebar in partition
 
@@ -177,6 +178,7 @@ class InputForm(forms.WPFWindow):
 
         # Store rebar data
         self.rebar_data = []
+        self.finish_requested = False
 
         # Get all partitions
         self.partitions = get_all_rebar_partitions()
@@ -228,7 +230,7 @@ class InputForm(forms.WPFWindow):
                 self.Select_rebar_number.SelectedItem = default_padded
 
         # Set up default value for new rebar number
-        self.New_Rebar_number.Text = ""
+        self.New_Rebar_number.Text = "0"
 
     def on_partition_changed(self, sender, e):
         self.update_rebar_numbers()
@@ -264,6 +266,13 @@ class InputForm(forms.WPFWindow):
         self.current_number = self.Select_rebar_number.SelectedItem  # Changed from .Text to .SelectedItem
         self.new_number = self.New_Rebar_number.Text
         self.selected_partition = self.Select_partition.SelectedItem
+
+        # Silent finish on blank new number
+        if not str(self.new_number).strip():
+            self.finish_requested = True
+            self.DialogResult = True
+            self.Close()
+            return
 
         # Find selected rebar data: match by integer when possible, else by padded/raw string
         selected_rebar_data = None
@@ -350,6 +359,7 @@ class InputForm(forms.WPFWindow):
         if success:
             # Silent on success — refresh the number list to reflect changes
             self.update_rebar_numbers()
+            self.New_Rebar_number.Text = ""
 
             # Try to select the new number if present (use padded display)
             digits = get_rebar_number_digits()
@@ -437,6 +447,10 @@ try:
         # If user cancelled, exit silently
         if not result:
             script.exit()
+
+        # If user pressed OK with blank new number, finish silently
+        if getattr(input_form, 'finish_requested', False):
+            break
 
         # Validate number inputs
         try:
