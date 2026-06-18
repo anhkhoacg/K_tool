@@ -1,7 +1,7 @@
 __title__ = "Show All Rebar"
 __author__ = "Khoa Le at Haskoning"
 __helpurl__ = ""
-__doc__ = """Version = 1.0
+__doc__ = """Version = 1.1
 Date    = 10.10.2023
 _____________________________________________________________________
 Description:
