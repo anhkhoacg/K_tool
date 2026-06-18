@@ -1,6 +1,6 @@
 __title__ = 'Add filter to current view'
 __author__ = 'Khoa le'
-__doc__ = """Add filter to current view 
+__doc__ = """Add filter to current view with the option to search/filter from all filters in the model.
             Noted that the new filter to be set to hide (unstick Visible)  
     Author: Khoa.Le @Haskoning"""
 

@@ -1,3 +1,9 @@
+
+__title__ = 'Flip Grids'
+__doc__ = 'Flip the selected grid bubble in the current view.'
+__author__ = 'Khoa Le (at) Haskoning', 'Copilot'
+__tooltip__ = 'Select grid lines to cycle between on/off bubble.'
+
 from pyrevit import forms, revit, DB
 
 # Set the active Revit application and document

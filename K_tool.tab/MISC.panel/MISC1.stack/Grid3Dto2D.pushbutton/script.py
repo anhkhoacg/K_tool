@@ -1,4 +1,8 @@
 # -*- coding: utf-8 -*-
+__title__ = 'Grid 3D to 2D'
+__author__ = 'Khoa Le (at) Haskoning', 'Copilot'
+__doc__ = 'Convert selected Revit Grids from 3D (Model) to 2D (ViewSpecific) in the active view.'
+
 """
 Convert selected Revit Grids from 3D (Model) to 2D (ViewSpecific) in the active view.
 Works in pyRevit environment.
