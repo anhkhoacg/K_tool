@@ -33,12 +33,11 @@ This is a personal learning project for Revit API and is provided free to use wi
   - **Unobscure** : set all rebar in view to Unobscure ( on top of other elements)
   - **ShowAllRebar_py** : Display all rebar in rebar set for all rebar in view
   - **CopyRebarNumberToScheduleMark** : Copy RebarNumber To ScheduleMark
-
   - **MultiRebarAnnotation** : Add bulk MultiRebarAnnotation 
   - **Renumber** : To renunber the rebar of partitions
 ####  3. Miscelanous
-  -**Open in Autodesk Docs**: This script will open the current Revit project in Autodesk Docs in your default web browser.
-  -**Dimension Grids** :Select grid lines to automatically create dimensions between them and overall line.
+  -	**Open in Autodesk Docs**: This script will open the current Revit project in Autodesk Docs in your default web browser.
+  -	**Dimension Grids** :Select grid lines to automatically create dimensions between them and overall line.
   - **Flip Grids** : to Flip Grids buble
   - **Grid 3D to 2D** :  Convert selected Revit Grids from 3D (Model) to 2D (ViewSpecific) in the active view.
   - **Add filter to current view'** : Add filter to current view with the option to search/filter from all filters in the model.
@@ -60,9 +59,9 @@ Công cụ của K là tiện ích mở rộng thanh công cụ cho pyRevit, đ�
 1. Mở Command Prompt (WIN+R, gõ 'cmd')
 2. Chạy lệnh sau:
    ```
-   pyrevit extend ui K_tool https://github.com/anhkhoacg/K_tool --dest="C:\thu_muc_cai_đat" --branch=main
+   pyrevit extend ui K_tool https://github.com/anhkhoacg/K_tool --dest="C:\thu_muc_cai_dat" --branch=main
    ```
-   Lưu ý: Thay `"C:\thu_muc_cai_đat"` bằng thư mục bạn muốn
+   Lưu ý: Thay `"C:\thu_muc_cai_dat"` bằng thư mục bạn muốn
 3. Khởi động lại Revit hoặc dùng nút reload của pyRevit nếu Revit đang mở
 
 ### Tính năng
