@@ -1,47 +1,39 @@
-# Works in RevitPythonShell / pyRevit (IronPython) or CPython via Revit API
-from Autodesk.Revit.DB import (
-    FilteredElementCollector,
-    LinePatternElement,
-    Transaction, BuiltInCategory, GraphicsStyleType
-)
-from System import Enum
+# -*- coding: utf-8 -*-
+from Autodesk.Revit.DB import FilteredElementCollector, ViewSection, ViewType, Viewport
+from Autodesk.Revit.UI import TaskDialog
 
-doc = __revit__.ActiveUIDocument.Document  # pyRevit/RevitPythonShell
-# If using RevitPythonShell without __revit__, use:
-# doc = __revit__.ActiveUIDocument.Document
+uidoc = __revit__.ActiveUIDocument
+doc = uidoc.Document
+active_view = doc.ActiveView
 
-# Collect all LinePatternElements
-patterns = FilteredElementCollector(doc).OfClass(LinePatternElement).ToElements()
+viewports = list(FilteredElementCollector(doc).OfClass(Viewport))
+sheet_by_view_id = {}
+for vp in viewports:
+    sheet = doc.GetElement(vp.SheetId)
+    if sheet:
+        sheet_by_view_id[vp.ViewId.IntegerValue] = "{} - {}".format(sheet.SheetNumber, sheet.Name)
 
+matches = []
+for view in FilteredElementCollector(doc).OfClass(ViewSection):
+    if view.IsTemplate:
+        continue
+    if view.OwnerViewId != active_view.Id:
+        continue
 
-def segment_type_to_str(seg_type):
-    # LinePatternSegmentType is an enum: Dash, Dot, Space
-    return str(seg_type)  # prints something like 'Dash', 'Dot', or 'Space'
+    is_callout = getattr(view, "IsCallout", False)
+    if not is_callout and view.ViewType != ViewType.Section:
+        continue
 
+    kind = "Callout" if is_callout else "Section"
+    sheet_name = sheet_by_view_id.get(view.Id.IntegerValue, "<Not placed on sheet>")
+    matches.append((view.Name or "", kind, sheet_name))
 
-if not patterns:
-    print("No Line Patterns found in this project.")
+if not matches:
+    TaskDialog.Show("Section/Callout Views", "No section or callout views found in current view.")
 else:
-    lines_cat = doc.Settings.Categories.get_Item(BuiltInCategory.OST_Lines)
-    t = Transaction(doc, "Create line styles from line patterns")
-    t.Start()
-    try:
-        for lpe in sorted(patterns, key=lambda e: e.Name or ""):
-            name = lpe.Name or ""
-            if not name:
-                continue
-            subcat = None
-            try:
-                subcat = lines_cat.SubCategories.get_Item(name)
-            except:
-                subcat = None
-
-            if subcat is None:
-                subcat = doc.Settings.Categories.NewSubcategory(lines_cat, name)
-
-            gs = subcat.GetGraphicsStyle(GraphicsStyleType.Projection)
-            gs.GraphicsStyleCategory.SetLinePatternId(lpe.Id, GraphicsStyleType.Projection)
-        t.Commit()
-    except:
-        t.RollBack()
-        raise
+    matches.sort(key=lambda x: x[0].lower())
+    lines = ["{} | {} | {}".format(kind, name, sheet_name) for name, kind, sheet_name in matches]
+    TaskDialog.Show(
+        "Section/Callout Views",
+        "Current View: {}\nCount: {}\n\n{}".format(active_view.Name, len(lines), "\n".join(lines))
+    )
