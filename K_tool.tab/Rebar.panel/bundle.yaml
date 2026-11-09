@@ -3,6 +3,6 @@ layout:
   - Rebar2
   - MultiRebarTag
 background:
-  panel: '#0b3d5c'
-  title: '#1ebaa8'
-  slideout: '#0b3d5c'
+  panel: '#2621856B'
+  title: '#21856B'
+  slideout: '#21856B'

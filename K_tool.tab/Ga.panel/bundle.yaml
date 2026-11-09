@@ -3,6 +3,6 @@ layout:
   - ElementViewSet
   - Centroid
 background:
-  panel: '#0b3d5c'
-  title: '#1e7fa8'
-  slideout: '#00dfff'
+  panel: '#261E7FA8'
+  title: '#1E7FA8'
+  slideout: '#1E7FA8'

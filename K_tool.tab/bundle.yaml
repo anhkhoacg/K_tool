@@ -4,6 +4,6 @@ layout:
   - MISC
   - View
 background:
-  panel: '#ff0000'
-  title: '#00ff00'
-  slideout: '#0055ff'
+  panel: '#262A7AB0'
+  title: '#2A7AB0'
+  slideout: '#2A7AB0'
