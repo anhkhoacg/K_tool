@@ -1,0 +1,5 @@
+title: Grid Mark
+
+tooltip: Write the nearest grid intersection (e.g. A-3) into a text parameter (default Mark) of the selected elements. With nothing selected, pick categories to process in the active view. Duplicates get a suffix (A-3a, A-3b). Elements far from grids get OFF-GRID. Shift+Click to set the tolerance.
+
+author: Khoa Le
