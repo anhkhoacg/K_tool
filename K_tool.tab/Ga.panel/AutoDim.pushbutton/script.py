@@ -11,16 +11,26 @@ vertical direction (left or right of the element).
 
 Only planar faces that are seen edge-on (normal parallel to the view's
 Right or Up direction) are dimensioned. Coplanar faces are merged.
+
+Option: use the reference planes of family instances (Strong / Weak /
+Left / Right / Front / Back / Top / Bottom / Center...) as extra
+dimension references, or instead of faces. Planes set to
+"Not a Reference" in the family are not exposed by Revit and are
+ignored. A plane's position is measured with a temporary dimension
+to a temporary detail line (both rolled back), so it is correct for
+every type / instance size and for mirrored instances.
+
 Offsets are given in paper millimetres and scaled by the view scale.
 
-Shift+Click to change offsets.
+Shift+Click to choose what to dimension and the offsets (config.py).
+A normal click runs with the saved settings, without any dialog.
 
 Compatible with IronPython 2.7 and CPython 3 (pyRevit), Revit 2024+.
 """
 
 from Autodesk.Revit.UI.Selection import ObjectType, ISelectionFilter
 
-from pyrevit import revit, DB, forms, script, EXEC_PARAMS
+from pyrevit import revit, DB, forms, script
 
 
 doc = revit.doc
@@ -53,20 +63,41 @@ VIEW_TYPES_OK = (
     DB.ViewType.Detail,
 )
 
-OPT_H_CHAIN = "Horizontal - chain"
-OPT_H_OVERALL = "Horizontal - overall"
-OPT_V_CHAIN = "Vertical - chain"
-OPT_V_OVERALL = "Vertical - overall"
-OPT_H_TOP = "Place horizontal dims ABOVE (default below)"
-OPT_V_RIGHT = "Place vertical dims on the RIGHT (default left)"
+# Option keys saved by config.py (Shift+Click), with their defaults.
+# Keep in sync with OPTIONS in config.py.
+OPT_H_CHAIN = "h_chain"
+OPT_H_OVERALL = "h_overall"
+OPT_V_CHAIN = "v_chain"
+OPT_V_OVERALL = "v_overall"
+OPT_H_TOP = "h_top"
+OPT_V_RIGHT = "v_right"
+OPT_REF_PLANES = "ref_planes"
+OPT_PLANES_ONLY = "planes_only"
+OPT_NO_WEAK = "no_weak"
 
-OPTIONS = [
+OPTION_DEFAULTS = [
     (OPT_H_CHAIN, True),
     (OPT_H_OVERALL, True),
     (OPT_V_CHAIN, True),
     (OPT_V_OVERALL, True),
     (OPT_H_TOP, False),
     (OPT_V_RIGHT, False),
+    (OPT_REF_PLANES, True),
+    (OPT_PLANES_ONLY, False),
+    (OPT_NO_WEAK, True),
+]
+
+# Distance of the temporary anchor line from the element (feet).
+# Must be larger than how far any reference plane sits outside the
+# element's geometry.
+ANCHOR_MARGIN_FT = 500.0
+
+# FamilyInstanceReferenceType values collected as reference planes
+PLANE_REF_TYPES = [
+    "Left", "CenterLeftRight", "Right",
+    "Front", "CenterFrontBack", "Back",
+    "Bottom", "CenterElevation", "Top",
+    "StrongReference", "WeakReference",
 ]
 
 
@@ -167,21 +198,132 @@ def get_geometry(element):
     return faces, points
 
 
-def unique_stations(faces, axis, tol):
+def face_stations(faces, axis):
+    """(position, reference) of faces whose normal is parallel to axis."""
+    return [(f.origin.DotProduct(axis), f.reference) for f in faces
+            if abs(f.normal.DotProduct(axis)) >= PARALLEL_COS]
+
+
+def merge_stations(stations, tol):
     """
-    Faces whose normal is parallel to `axis`, merged by position along
-    the axis. Returns sorted list of (position, reference).
+    Drop stations closer than tol to an earlier one (earlier entries
+    win), then sort by position.
     """
     found = []
-    for f in faces:
-        if abs(f.normal.DotProduct(axis)) < PARALLEL_COS:
-            continue
-        pos = f.origin.DotProduct(axis)
+    for pos, ref in stations:
         if any(abs(pos - p) < tol for p, _r in found):
             continue
-        found.append((pos, f.reference))
+        found.append((pos, ref))
     found.sort(key=lambda item: item[0])
     return found
+
+
+# ============================================================
+# FAMILY REFERENCE PLANES
+# ============================================================
+
+def get_family_plane_refs(element, skip_weak=False):
+    """All reference-plane references a family instance exposes."""
+    if not isinstance(element, DB.FamilyInstance):
+        return []
+    refs, seen = [], set()
+    for type_name in PLANE_REF_TYPES:
+        if skip_weak and type_name == "WeakReference":
+            continue
+        ref_type = getattr(DB.FamilyInstanceReferenceType, type_name, None)
+        if ref_type is None:
+            continue
+        try:
+            found = element.GetReferences(ref_type)
+        except Exception:
+            continue
+        for ref in found:
+            try:
+                key = ref.ConvertToStableRepresentation(doc)
+            except Exception:
+                continue
+            if key in seen:
+                continue
+            seen.add(key)
+            refs.append(ref)
+    return refs
+
+
+def anchor_line(along, coord, span_lo, span_hi):
+    """
+    Temporary detail line used as a dimension anchor.
+    along = "H": anchor for horizontal dims = line parallel to Up at u=coord
+    along = "V": anchor for vertical dims   = line parallel to Right at v=coord
+    """
+    if along == "H":
+        line = DB.Line.CreateBound(view_point(coord, span_lo),
+                                   view_point(coord, span_hi))
+    else:
+        line = DB.Line.CreateBound(view_point(span_lo, coord),
+                                   view_point(span_hi, coord))
+    return doc.Create.NewDetailCurve(view, line)
+
+
+def measure_plane_stations(plane_refs, u_min, u_max, v_min, v_max):
+    """
+    Measure where each reference plane sits along Right and Up.
+
+    For each axis a temporary detail line is drawn perpendicular to the
+    axis, far before the element; a temporary dimension from that line
+    to the plane gives the plane's position. Planes not parallel to the
+    anchor make NewDimension fail and are skipped for that axis.
+    Everything is rolled back.
+
+    Returns (h_stations, v_stations) as lists of (position, reference).
+    """
+    h_found, v_found = [], []
+    if not plane_refs:
+        return h_found, v_found
+
+    u0 = u_min - ANCHOR_MARGIN_FT
+    v0 = v_min - ANCHOR_MARGIN_FT
+
+    sub = DB.SubTransaction(doc)
+    sub.Start()
+    try:
+        h_anchor = anchor_line("H", u0, v_min, v_max)
+        v_anchor = anchor_line("V", v0, u_min, u_max)
+        h_anchor_ref = h_anchor.GeometryCurve.Reference
+        v_anchor_ref = v_anchor.GeometryCurve.Reference
+
+        pending = []   # (axis, origin coord, dimension, plane ref)
+        for ref in plane_refs:
+            for axis, anchor_ref, origin in (("H", h_anchor_ref, u0),
+                                             ("V", v_anchor_ref, v0)):
+                arr = DB.ReferenceArray()
+                arr.Append(anchor_ref)
+                arr.Append(ref)
+                if axis == "H":
+                    line = DB.Line.CreateBound(view_point(u0, v0),
+                                               view_point(u0 + 1.0, v0))
+                else:
+                    line = DB.Line.CreateBound(view_point(u0, v0),
+                                               view_point(u0, v0 + 1.0))
+                try:
+                    dim = doc.Create.NewDimension(view, line, arr)
+                except Exception:
+                    dim = None
+                if dim is not None:
+                    pending.append((axis, origin, dim, ref))
+
+        doc.Regenerate()
+        for axis, origin, dim, ref in pending:
+            try:
+                value = dim.Value
+            except Exception:
+                value = None
+            if value is None or value < 1e-6:
+                continue
+            target = h_found if axis == "H" else v_found
+            target.append((origin + value, ref))
+    finally:
+        sub.RollBack()
+    return h_found, v_found
 
 
 def ref_array(stations):
@@ -246,28 +388,31 @@ if view.ViewType not in VIEW_TYPES_OK:
                 "(3D views and sheets are not supported.)",
                 exitscript=True)
 
-first_paper = FIRST_OFFSET_PAPER_MM
-spacing_paper = SPACING_PAPER_MM
-if EXEC_PARAMS.config_mode:  # Shift+Click
-    text = forms.ask_for_string(
-        default="{}, {}".format(first_paper, spacing_paper),
-        prompt="Paper offsets in mm: first line, spacing",
-        title="Auto Dim")
-    if text is None:
-        script.exit()
-    try:
-        first_paper, spacing_paper = [float(t) for t in text.split(",")]
-    except Exception:
-        forms.alert("Invalid input: {}".format(text), exitscript=True)
+# Settings come from the button config (Shift+Click -> config.py)
+cfg = script.get_config()
 
-chosen = forms.SelectFromList.show(
-    [forms.TemplateListItem(name, checked=on) for name, on in OPTIONS],
-    title="Auto Dim - what to dimension",
-    multiselect=True,
-    button_name="Next")
-if not chosen:
-    script.exit()
-chosen = set(chosen)
+
+def as_bool(value):
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes")
+    return bool(value)
+
+
+chosen = set(key for key, default in OPTION_DEFAULTS
+             if as_bool(cfg.get_option(key, default)))
+try:
+    first_paper = float(cfg.get_option("first_paper_mm",
+                                       FIRST_OFFSET_PAPER_MM))
+    spacing_paper = float(cfg.get_option("spacing_paper_mm",
+                                         SPACING_PAPER_MM))
+except (TypeError, ValueError):
+    first_paper, spacing_paper = FIRST_OFFSET_PAPER_MM, SPACING_PAPER_MM
+
+if not chosen & set([OPT_H_CHAIN, OPT_H_OVERALL, OPT_V_CHAIN,
+                     OPT_V_OVERALL]):
+    forms.alert("No dimensions are enabled.\n"
+                "Shift+Click the button to choose what to dimension.",
+                exitscript=True)
 
 elements = get_elements()
 if not elements:
@@ -279,6 +424,10 @@ scale = max(view.Scale, 1)
 first_off = mm(first_paper) * scale
 spacing = mm(spacing_paper) * scale
 tol = mm(MERGE_TOL_MM)
+
+planes_only = OPT_PLANES_ONLY in chosen
+use_planes = planes_only or OPT_REF_PLANES in chosen
+skip_weak = OPT_NO_WEAK in chosen
 
 h_sign = 1.0 if OPT_H_TOP in chosen else -1.0
 v_sign = 1.0 if OPT_V_RIGHT in chosen else -1.0
@@ -294,8 +443,8 @@ with revit.Transaction("Auto Dim"):
         except Exception as error:
             skipped.append((el, "geometry: {}".format(error)))
             continue
-        if not faces or not points:
-            skipped.append((el, "no planar faces visible in this view"))
+        if not points:
+            skipped.append((el, "no geometry visible in this view"))
             continue
 
         us = [p.DotProduct(right) for p in points]
@@ -303,8 +452,35 @@ with revit.Transaction("Auto Dim"):
         u_min, u_max = min(us), max(us)
         v_min, v_max = min(vs), max(vs)
 
-        h_st = unique_stations(faces, right, tol)   # positions along Right
-        v_st = unique_stations(faces, up, tol)      # positions along Up
+        # Reference planes first so they win over coincident faces
+        h_raw, v_raw = [], []
+        if use_planes:
+            plane_refs = get_family_plane_refs(el, skip_weak)
+            if plane_refs:
+                try:
+                    h_raw, v_raw = measure_plane_stations(
+                        plane_refs, u_min, u_max, v_min, v_max)
+                except Exception as error:
+                    failures.append((el, "reference planes: {}".format(
+                        error)))
+            if planes_only and not h_raw and not v_raw:
+                skipped.append((el, "no usable reference planes "
+                                    "(not a family, or all set to "
+                                    "Not a Reference)"))
+        if not planes_only:
+            h_raw += face_stations(faces, right)
+            v_raw += face_stations(faces, up)
+
+        h_st = merge_stations(h_raw, tol)   # positions along Right
+        v_st = merge_stations(v_raw, tol)   # positions along Up
+
+        # Keep dims clear of planes that sit outside the geometry
+        if h_st:
+            u_min = min(u_min, h_st[0][0])
+            u_max = max(u_max, h_st[-1][0])
+        if v_st:
+            v_min = min(v_min, v_st[0][0])
+            v_max = max(v_max, v_st[-1][0])
 
         # ---- horizontal (dimension line parallel to Right) ----
         h_base = v_max if h_sign > 0 else v_min

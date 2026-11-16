@@ -3,7 +3,4 @@ layout:
   - Rebar
   - MISC
   - View
-background:
-  panel: '#262A7AB0'
-  title: '#2A7AB0'
-  slideout: '#2A7AB0'
+  - Ga

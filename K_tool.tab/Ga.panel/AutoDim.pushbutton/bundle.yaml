@@ -3,5 +3,9 @@ tooltip: >-
   Dimension the selected elements in the active plan / section / elevation:
   chain dimension through every edge-on face plus an overall dimension,
   horizontally (below/above) and vertically (left/right).
-  Offsets are paper mm scaled by the view scale. Shift+Click to change offsets.
+  Option: use family reference planes (Strong/Weak/Left/Right/...) as
+  references, together with faces or on their own (Weak references
+  can be ignored).
+  Offsets are paper mm scaled by the view scale.
+  Shift+Click to choose what to dimension and the offsets.
 author: Khoa Le
