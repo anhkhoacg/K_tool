@@ -2,6 +2,7 @@ layout:
   - IsolateOnePerType
   - ElementViewSet
   - Centroid
+  - AutoDim
 background:
   panel: '#261E7FA8'
   title: '#1E7FA8'

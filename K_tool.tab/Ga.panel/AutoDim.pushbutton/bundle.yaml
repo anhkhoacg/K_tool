@@ -1,0 +1,7 @@
+title: Auto Dim
+tooltip: >-
+  Dimension the selected elements in the active plan / section / elevation:
+  chain dimension through every edge-on face plus an overall dimension,
+  horizontally (below/above) and vertically (left/right).
+  Offsets are paper mm scaled by the view scale. Shift+Click to change offsets.
+author: Khoa Le
