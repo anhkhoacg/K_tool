@@ -1,481 +1,577 @@
-
 # -*- coding: utf-8 -*-
-# pyRevit script: renumber rebar in partition
+"""Rebar Renumber - manage rebar numbering sequences (partitions).
 
-# Analysis:
-# Purpose: UI to renumber rebars by partition using Revit's numbering schema.
-# Observations / potential issues:
-# - "Rebar" number matching and partition lookups rely on parameter names; consider handling case-insensitive parameter names or built-in fallbacks (already partly addressed).
-# - Name comparisons and numeric parsing assume integers; code alerts when values are non-numeric but could be more tolerant.
-# - get_rebar_numbers_in_partition and other functions create new FilteredElementCollector calls repeatedly; consider caching if performance becomes an issue.
-# - The script creates InputForm twice (get_user_inputs unused & main loop creates InputForm directly). Consider consolidating to a single flow to avoid duplication.
-# - Silent exception handling hides specific API failures (ChangeNumber). Consider logging failed element ids or exception messages for debugging.
-# - Category checks use Category.Id.IntegerValue vs int(BuiltInCategory.OST_Rebar) — this works but using ElementId(int(...)) comparisons or utility helpers may be clearer.
-# Suggested minimal improvements (not applied here to avoid behavior changes):
-#  - Make numeric checks robust (handle leading zeros, whitespace).
-#  - Make "Partition" and "Number" lookup case-insensitive, and prefer BuiltInParameter lookups when possible.
-#  - Log or collect failed operations to present to the user after the transaction.
+Actions (all through Revit's NumberingSchema API, Revit 2015+):
+  - Change number        : A -> B (offers a swap when B is already used)
+  - Swap two numbers     : A <-> B, via a spare number, as one undo step
+  - Close gaps           : RemoveGaps (lowest number is kept)
+  - Shift start number   : ShiftNumbers (gaps are kept)
+  - Move bars to partition: AssignElementsToSequence for picked/selected bars
+"""
 
-from Autodesk.Revit.DB import *
+import clr
+clr.AddReference("PresentationCore")
+clr.AddReference("PresentationFramework")
+clr.AddReference("WindowsBase")
+
+from System.Collections.Generic import HashSet, List
+from System.Windows import Visibility
+from System.Windows.Media import Brushes
+
+from Autodesk.Revit.DB import (BuiltInCategory, BuiltInParameter, ElementId,
+                               FilteredElementCollector, NumberingSchema,
+                               NumberingSchemaTypes, Transaction, TransactionGroup)
+from Autodesk.Revit.UI.Selection import ISelectionFilter, ObjectType
+from Autodesk.Revit.Exceptions import OperationCanceledException
 from pyrevit import forms
-from pyrevit import revit, DB
-from pyrevit import script
-from pyrevit.forms import ProgressBar
 
 doc = __revit__.ActiveUIDocument.Document
 uidoc = __revit__.ActiveUIDocument
 
+DEFAULT_PARTITION_LABEL = "(default)"
 
-def get_param_value(element, param_name):
-    """Helper function to get parameter value"""
-    param = element.LookupParameter(param_name)
-    if not param:
-        # Try to get parameter by built-in parameter
-        if param_name == "Partition":
-            param = element.get_Parameter(BuiltInParameter.NUMBER_PARTITION_PARAM)
-        elif param_name == "Number":
-            param = element.get_Parameter(BuiltInParameter.REBAR_NUMBER)
+ACTION_CHANGE = "Change number"
+ACTION_SWAP = "Swap two numbers"
+ACTION_GAPS = "Close gaps in partition"
+ACTION_SHIFT = "Shift start number"
+ACTION_MOVE = "Move bars to partition"
+ACTIONS = [ACTION_CHANGE, ACTION_SWAP, ACTION_GAPS, ACTION_SHIFT, ACTION_MOVE]
 
-    if param:
-        if param.StorageType == StorageType.String:
-            return param.AsString()
-        elif param.StorageType == StorageType.Integer:
-            return str(param.AsInteger())
-        elif param.StorageType == StorageType.Double:
-            return str(param.AsDouble())
-    return None
+ACTION_HINTS = {
+    ACTION_CHANGE: "Gives every bar with the selected number a new, unused number.",
+    ACTION_SWAP: "Exchanges two numbers in this partition. Undoes as a single step.",
+    ACTION_GAPS: "Renumbers so there are no gaps, e.g. 1,2,5,9 -> 1,2,3,4. The lowest number is kept.",
+    ACTION_SHIFT: "Moves the whole sequence so it starts at the given number. Gaps are kept.",
+    ACTION_MOVE: "Moves the bars to another (or a new) partition; Revit numbers them there. "
+                 "Bars matching existing bars in the target get the same number.",
+}
 
 
-def get_all_rebar_partitions():
-    """Get all unique rebar partitions in the model using parameter name"""
-    all_rebars = FilteredElementCollector(doc).OfCategory(
-        BuiltInCategory.OST_Rebar).WhereElementIsNotElementType().ToElements()
-    partitions = set()
+# --------------------------------------------------------------------------- helpers
 
-    # Debug information
-    if not all_rebars:
-        forms.alert("No rebars found in the model!")
-        return []
-
-    for rebar in all_rebars:
-        partition = get_param_value(rebar, "Partition")
-        if partition:
-            partitions.add(partition)
-
-    # Debug information
-    if not partitions:
-        forms.alert("No partitions found in the rebars. Check parameter names.")
-
-    return sorted(list(partitions))
-
-
-def get_rebar_number_digits():
-    """
-    Try to obtain the rebar-number digit count from the NumberingSchema.
-    If the API does not expose a digits property, infer from existing rebar numbers
-    by using the maximum numeric string length found (fallback).
-    Returns an integer >= 0 (0 means 'no fixed padding').
-    """
-    # Try schema attribute heuristics first
+def eid_int(eid):
+    """ElementId -> int on all Revit versions (IntegerValue was removed in 2026)."""
     try:
-        schema = NumberingSchema.GetNumberingSchema(
-            doc,
-            NumberingSchemaTypes.StructuralNumberingSchemas.Rebar
-        )
-        # common possible attribute names (best-effort)
-        for attr in ('Digits', 'NumberDigits', 'NumberOfDigits', 'DigitCount'):
-            val = getattr(schema, attr, None)
-            if isinstance(val, int) and val >= 0:
-                return val
-    except Exception:
-        pass
+        return eid.Value
+    except AttributeError:
+        return eid.IntegerValue
 
-    # Fallback: infer from existing rebar numbers (max string length of numeric-looking values)
+
+REBAR_CAT_ID = int(BuiltInCategory.OST_Rebar)
+
+
+def is_rebar(element):
+    return (element is not None and element.Category is not None
+            and eid_int(element.Category.Id) == REBAR_CAT_ID)
+
+
+def param_string(element, bip, fallback_name):
+    param = element.get_Parameter(bip) or element.LookupParameter(fallback_name)
+    if param is None or not param.HasValue:
+        return None
+    value = param.AsString()
+    if value is None:
+        value = param.AsValueString()
+    return value
+
+
+def parse_int(value):
     try:
-        all_rebars = FilteredElementCollector(doc).OfCategory(
-            BuiltInCategory.OST_Rebar).WhereElementIsNotElementType().ToElements()
-        max_len = 0
-        for rebar in all_rebars:
-            num = get_param_value(rebar, "Number")
-            if not num:
-                continue
-            s = str(num).strip()
-            # consider strings that contain digits (e.g. "08", "8"); count full length to preserve leading zeros
-            if any(ch.isdigit() for ch in s):
-                max_len = max(max_len, len(s))
-        return max_len if max_len > 0 else 0
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def partition_label(partition):
+    return partition if partition else DEFAULT_PARTITION_LABEL
+
+
+def partition_key(label):
+    label = (label or "").strip()
+    return "" if label == DEFAULT_PARTITION_LABEL else label
+
+
+def error_text(ex):
+    text = getattr(ex, "Message", None) or str(ex)
+    return text.strip().splitlines()[0] if text.strip() else ex.__class__.__name__
+
+
+def get_schema():
+    return NumberingSchema.GetNumberingSchema(
+        doc, NumberingSchemaTypes.StructuralNumberingSchemas.Rebar)
+
+
+def get_min_digits():
+    try:
+        return max(1, int(NumberingSchema.GetMinimumNumberOfDigits(doc)))
     except Exception:
-        return 0
+        return 1
 
 
-def get_rebar_numbers_in_partition(partition):
-    """Get all rebar numbers in a specific partition"""
-    all_rebars = FilteredElementCollector(doc).OfCategory(
-        BuiltInCategory.OST_Rebar).WhereElementIsNotElementType().ToElements()
-    rebar_data = []
+class RebarFilter(ISelectionFilter):
+    def AllowElement(self, element):
+        return is_rebar(element)
 
-    # Debug information
-    if not all_rebars:
-        forms.alert("No rebars found while getting numbers!")
-        return []
-
-    # determine padding digits for display
-    digits = get_rebar_number_digits()
-
-    for rebar in all_rebars:
-        current_partition = get_param_value(rebar, "Partition")
-        if current_partition == partition:
-            number = get_param_value(rebar, "Number")
-            if number:
-                num_str = str(number).strip()
-                # try to parse integer value; for non-numeric keep original string and skip int
-                try:
-                    num_int = int(num_str)
-                    padded = str(num_int).zfill(digits) if digits and digits > 0 else str(num_int)
-                except Exception:
-                    num_int = None
-                    padded = num_str
-                # Store raw, int (or None), padded display and element info
-                rebar_data.append({
-                    'number': num_str,
-                    'int': num_int,
-                    'padded': padded,
-                    'id': rebar.Id.IntegerValue,
-                    'rebar': rebar
-                })
-
-    # Debug information
-    if not rebar_data:
-        forms.alert("No rebar numbers found in partition: " + partition)
-
-    # Sort by integer when possible, otherwise by string
-    sorted_data = sorted(rebar_data,
-                         key=lambda x: (x['int'] is None, x['int'] if x['int'] is not None else x['number']))
-    return sorted_data
+    def AllowReference(self, reference, point):
+        return False
 
 
-def get_selected_rebar():
-    """Get the currently selected rebar element if any"""
-    selection = list(uidoc.Selection.GetElementIds())
-    if len(selection) == 1:
-        element = doc.GetElement(selection[0])
-        if element and element.Category and element.Category.Id.IntegerValue == int(BuiltInCategory.OST_Rebar):
-            return element
-    return None
+def get_selected_rebar_ids():
+    ids = []
+    for eid in uidoc.Selection.GetElementIds():
+        if is_rebar(doc.GetElement(eid)):
+            ids.append(eid)
+    return ids
 
 
-class InputForm(forms.WPFWindow):
+# --------------------------------------------------------------------------- model index
+
+class RebarIndex(object):
+    """One pass over the model: partition -> number -> [ElementId]."""
+
     def __init__(self):
-        forms.WPFWindow.__init__(self, 'input_form.xaml')
+        self.schema = get_schema()
+        self.digits = get_min_digits()
+        self.by_partition = {}
+        self.partition_of = {}
+        bars = FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_Rebar) \
+            .WhereElementIsNotElementType()
+        for bar in bars:
+            partition = param_string(bar, BuiltInParameter.NUMBER_PARTITION_PARAM, "Partition") or ""
+            raw = param_string(bar, BuiltInParameter.REBAR_NUMBER, "Rebar Number")
+            if raw is None or not raw.strip():
+                continue
+            number = parse_int(raw)
+            key = number if number is not None else raw.strip()
+            self.by_partition.setdefault(partition, {}).setdefault(key, []).append(bar.Id)
+            self.partition_of[eid_int(bar.Id)] = partition
 
-        # Set up event handlers
-        self.ok_button.Click += self.save_values
-        self.cancel_button.Click += self.window_close
+    def partitions(self):
+        names = set(self.by_partition.keys())
+        try:
+            names.update(self.schema.GetNumberingSequences())
+        except Exception:
+            pass
+        return sorted(names, key=lambda p: (p != "", p.lower()))
+
+    def numbers(self, partition):
+        keys = list(self.by_partition.get(partition, {}).keys())
+        ints = sorted(k for k in keys if isinstance(k, int))
+        others = sorted(k for k in keys if not isinstance(k, int))
+        return ints + others
+
+    def int_numbers(self, partition):
+        return [k for k in self.numbers(partition) if isinstance(k, int)]
+
+    def ids(self, partition, number=None):
+        numbers = self.by_partition.get(partition, {})
+        if number is not None:
+            return list(numbers.get(number, []))
+        result = []
+        for ids in numbers.values():
+            result.extend(ids)
+        return result
+
+    def fmt(self, number):
+        return str(number).zfill(self.digits) if isinstance(number, int) else number
+
+    def max_number(self, partition):
+        high = 0
+        try:
+            for rng in self.schema.GetNumbers(partition):
+                high = max(high, rng.High)
+        except Exception:
+            pass
+        ints = self.int_numbers(partition)
+        return max([high] + ints)
+
+    def next_free(self, partition):
+        return self.max_number(partition) + 1
+
+    def gaps(self, partition):
+        ints = self.int_numbers(partition)
+        if not ints:
+            return 0
+        return (ints[-1] - ints[0] + 1) - len(ints)
+
+    def summary(self, partition):
+        ints = self.int_numbers(partition)
+        bars = len(self.ids(partition))
+        if not ints:
+            return "{} bars".format(bars)
+        gaps = self.gaps(partition)
+        return "{} bars | {} numbers | {}-{} | {}".format(
+            bars, len(self.numbers(partition)), self.fmt(ints[0]), self.fmt(ints[-1]),
+            "no gaps" if gaps == 0 else "{} missing number{}".format(gaps, "" if gaps == 1 else "s"))
+
+
+# --------------------------------------------------------------------------- operations
+# Each returns a short success message or raises with a readable message.
+
+class ActionError(Exception):
+    pass
+
+
+def run_transaction(name, func):
+    t = Transaction(doc, name)
+    t.Start()
+    try:
+        result = func()
+        t.Commit()
+        return result
+    except Exception:
+        if t.HasStarted() and not t.HasEnded():
+            t.RollBack()
+        raise
+
+
+def op_change(index, partition, old, new):
+    run_transaction("Renumber Rebar {} -> {}".format(old, new),
+                    lambda: index.schema.ChangeNumber(partition, old, new))
+    return "Changed {} -> {}.".format(index.fmt(old), index.fmt(new))
+
+
+def op_swap(index, partition, a, b):
+    spare = index.next_free(partition)
+    group = TransactionGroup(doc, "Swap Rebar Numbers {} <-> {}".format(a, b))
+    group.Start()
+    try:
+        for old, new in ((a, spare), (b, a), (spare, b)):
+            run_transaction("Swap step", lambda o=old, n=new: index.schema.ChangeNumber(partition, o, n))
+        group.Assimilate()
+    except Exception:
+        if group.HasStarted() and not group.HasEnded():
+            group.RollBack()
+        raise
+    return "Swapped {} <-> {}.".format(index.fmt(a), index.fmt(b))
+
+
+def op_gaps(index, partition):
+    gaps = index.gaps(partition)
+    if gaps == 0:
+        raise ActionError("This partition has no gaps.")
+    run_transaction("Remove Rebar Number Gaps", lambda: index.schema.RemoveGaps(partition))
+    return "Closed {} missing number{}.".format(gaps, "" if gaps == 1 else "s")
+
+
+def op_shift(index, partition, first):
+    try:
+        maximum = index.schema.MaximumStartingNumber
+    except Exception:
+        maximum = None
+    if first < 1 or (maximum and first > maximum):
+        raise ActionError("Start number must be between 1 and {}.".format(maximum or "the maximum"))
+    ints = index.int_numbers(partition)
+    if ints and ints[0] == first:
+        raise ActionError("The sequence already starts at {}.".format(index.fmt(first)))
+    run_transaction("Shift Rebar Numbers", lambda: index.schema.ShiftNumbers(partition, first))
+    return "Sequence now starts at {}.".format(index.fmt(first))
+
+
+def op_move(index, ids, target):
+    id_set = HashSet[ElementId]()
+    for eid in ids:
+        id_set.Add(eid)
+    run_transaction("Move Rebar to Partition",
+                    lambda: index.schema.AssignElementsToSequence(id_set, target))
+    return "Moved {} bar{} to '{}'.".format(len(ids), "" if len(ids) == 1 else "s", partition_label(target))
+
+
+# --------------------------------------------------------------------------- form
+
+class RenumberForm(forms.WPFWindow):
+    def __init__(self, state):
+        forms.WPFWindow.__init__(self, "input_form.xaml")
+        self.state = state
+        self.pick_requested = False
+        self.select_ids = None
+        self.number_keys = []
+        self._loading = True
+
+        self.index = RebarIndex()
+        self.partition_keys = self.index.partitions()
+        if not self.partition_keys:
+            forms.alert("No numbered rebar found in the model.", exitscript=True)
+
+        self.move_ids = list(state.get("move_ids") or [])
+
+        self.Select_partition.ItemsSource = [partition_label(p) for p in self.partition_keys]
+        self.action_combo.ItemsSource = ACTIONS
+
         self.Select_partition.SelectionChanged += self.on_partition_changed
+        self.action_combo.SelectionChanged += self.on_action_changed
+        self.apply_button.Click += self.on_apply
+        self.ok_button.Click += self.on_ok
+        self.cancel_button.Click += self.on_close
+        self.select_button.Click += self.on_select
+        self.pick_button.Click += self.on_pick
 
-        # Add Apply button handler
-        self.apply_button.Click += self.apply_values
+        self.apply_initial_state()
+        self._loading = False
+        self.refresh(keep_number=state.get("number"))
 
-        # Store rebar data
-        self.rebar_data = []
-        self.finish_requested = False
+    # ---- initial values
+    def apply_initial_state(self):
+        partition = self.state.get("partition")
+        default_number = None
+        if partition is None:
+            selected = get_selected_rebar_ids()
+            if selected:
+                partitions = set(self.index.partition_of.get(eid_int(i), "") for i in selected)
+                if len(partitions) == 1:
+                    partition = partitions.pop()
+                if len(selected) == 1 and partition is not None:
+                    bar = doc.GetElement(selected[0])
+                    raw = param_string(bar, BuiltInParameter.REBAR_NUMBER, "Rebar Number")
+                    default_number = parse_int(raw) if raw else None
+                if not self.move_ids:
+                    self.move_ids = selected
+        if partition not in self.partition_keys:
+            partition = self.partition_keys[0]
+        self.Select_partition.SelectedIndex = self.partition_keys.index(partition)
+        self.state.setdefault("number", default_number)
 
-        # Get all partitions
-        self.partitions = get_all_rebar_partitions()
-        if not self.partitions:
-            forms.alert("No rebar partitions found in the model.", exitscript=True)
+        action = self.state.get("action", ACTION_CHANGE)
+        self.action_combo.SelectedIndex = ACTIONS.index(action) if action in ACTIONS else 0
+        if self.state.get("target") is not None:
+            self.target_partition.Text = self.state["target"]
 
-        # Set up partition dropdown
-        self.Select_partition.ItemsSource = self.partitions
+    # ---- state
+    @property
+    def partition(self):
+        i = self.Select_partition.SelectedIndex
+        return self.partition_keys[i] if 0 <= i < len(self.partition_keys) else None
 
-        # Check for selected rebar
-        selected_rebar = get_selected_rebar()
-        if selected_rebar:
-            # Set default partition from selection
-            partition = get_param_value(selected_rebar, "Partition")
-            if partition in self.partitions:
-                self.Select_partition.SelectedItem = partition
+    @property
+    def action(self):
+        return self.action_combo.SelectedItem or ACTION_CHANGE
 
-            # Store default rebar number from selection (apply after items are populated)
-            current_number = get_param_value(selected_rebar, "Number")
-            if current_number:
-                self.default_current_number = str(current_number)
-        else:
-            # No selection, set first partition
-            self.Select_partition.SelectedIndex = 0
+    @property
+    def number(self):
+        i = self.Select_rebar_number.SelectedIndex
+        return self.number_keys[i] if 0 <= i < len(self.number_keys) else None
 
-        # Initialize rebar numbers for selected partition
-        self.update_rebar_numbers()
+    def get_state(self):
+        return {"partition": self.partition, "action": self.action, "number": self.number,
+                "target": self.target_partition.Text, "move_ids": self.move_ids}
 
-        # If a rebar was selected when the form opened, apply that number selection now
-        if hasattr(self, 'default_current_number') and self.rebar_data:
-            # Determine digits/padded form from the data set
-            # Build list of padded strings from data
-            unique_padded = []
-            for d in self.rebar_data:
-                if d['padded'] not in unique_padded:
-                    unique_padded.append(d['padded'])
+    # ---- UI refresh
+    def refresh(self, keep_number=None):
+        partition = self.partition
+        self.partition_info.Text = self.index.summary(partition) if partition is not None else ""
 
-            # Normalize default_current_number by integer if possible, else compare raw string
-            try:
-                default_int = int(str(self.default_current_number).strip())
-                # format with detected padding if present in data
-                # find digits from data (all padded entries with numeric ints will have same length)
-                digits = len(next((p for p in unique_padded if p.isdigit()), str(default_int)))
-                default_padded = str(default_int).zfill(digits) if digits and digits > 0 else str(default_int)
-            except Exception:
-                default_padded = str(self.default_current_number)
+        self.number_keys = self.index.numbers(partition) if partition is not None else []
+        items = []
+        for key in self.number_keys:
+            count = len(self.index.ids(partition, key))
+            items.append("{}    ({} bar{})".format(self.index.fmt(key), count, "" if count == 1 else "s"))
+        self.Select_rebar_number.ItemsSource = items
+        if keep_number in self.number_keys:
+            self.Select_rebar_number.SelectedIndex = self.number_keys.index(keep_number)
+        elif items:
+            self.Select_rebar_number.SelectedIndex = 0
 
-            if default_padded in unique_padded:
-                self.Select_rebar_number.SelectedItem = default_padded
+        targets = [partition_label(p) for p in self.partition_keys]
+        text = self.target_partition.Text
+        self.target_partition.ItemsSource = targets
+        self.target_partition.Text = text
 
-        # Set up default value for new rebar number
-        self.New_Rebar_number.Text = "0"
+        self.update_action_ui()
 
-    def on_partition_changed(self, sender, e):
-        self.update_rebar_numbers()
+    def update_action_ui(self):
+        action = self.action
+        show = lambda ctrl, on: setattr(ctrl, "Visibility", Visibility.Visible if on else Visibility.Collapsed)
+        show(self.row_number, action in (ACTION_CHANGE, ACTION_SWAP))
+        show(self.row_value, action in (ACTION_CHANGE, ACTION_SWAP, ACTION_SHIFT))
+        show(self.row_pick, action == ACTION_MOVE)
+        show(self.row_target, action == ACTION_MOVE)
+        self.action_hint.Text = ACTION_HINTS.get(action, "")
 
-    def update_rebar_numbers(self):
-        selected_partition = self.Select_partition.SelectedItem
-        if selected_partition:
-            # Get rebar data for the selected partition
-            self.rebar_data = get_rebar_numbers_in_partition(selected_partition)
-
-            # Update the dropdown with unique numbers (numerically sorted / padded)
-            if self.rebar_data:
-                unique_padded = []
-                unique_others = []
-                for d in self.rebar_data:
-                    if d['int'] is not None:
-                        if d['padded'] not in unique_padded:
-                            unique_padded.append(d['padded'])
-                    else:
-                        if d['number'] not in unique_others:
-                            unique_others.append(d['number'])
-
-                # numeric (padded) are already in numeric order from sorted_data
-                numbers_list = unique_padded[:]
-                if unique_others:
-                    numbers_list.extend(sorted(unique_others))
-
-                self.Select_rebar_number.ItemsSource = numbers_list
-                self.Select_rebar_number.SelectedIndex = 0
-
-    def save_values(self, sender, e):
-        # Get values from input form
-        self.current_number = self.Select_rebar_number.SelectedItem  # Changed from .Text to .SelectedItem
-        self.new_number = self.New_Rebar_number.Text
-        self.selected_partition = self.Select_partition.SelectedItem
-
-        # Silent finish on blank new number
-        if not str(self.new_number).strip():
-            self.finish_requested = True
-            self.DialogResult = True
-            self.Close()
-            return
-
-        # Find selected rebar data: match by integer when possible, else by padded/raw string
-        selected_rebar_data = None
-        try:
-            sel_int = int(str(self.current_number).strip())
-        except Exception:
-            sel_int = None
-
-        if sel_int is not None:
-            selected_rebar_data = next(
-                (data for data in self.rebar_data if data['int'] == sel_int),
-                None
-            )
-        else:
-            # fallback to matching padded or raw string
-            selected_rebar_data = next(
-                (data for data in self.rebar_data if
-                 data['padded'] == str(self.current_number) or data['number'] == str(self.current_number)),
-                None
-            )
-
-        self.selected_rebar_data = selected_rebar_data
-
-        # Validate new rebar number is an integer
-        try:
-            int(self.new_number)
-            if self.selected_rebar_data:  # Make sure we have valid rebar data
-                self.DialogResult = True
-                self.Close()
-            else:
-                forms.alert("Please select a valid rebar number.", exitscript=False)
-        except ValueError:
-            forms.alert("New rebar number must be an integer.", exitscript=False)
-
-    def apply_values(self, sender, e):
-        """
-        Validate inputs, call renumber_rebar immediately, refresh the rebar numbers list without closing the dialog.
-        """
-        # Read values from form controls
-        current_number = self.Select_rebar_number.SelectedItem
-        # fixed control name (was New_Rebar_Number) -> use New_Rebar_number
-        new_number = self.New_Rebar_number.Text
-        selected_partition = self.Select_partition.SelectedItem
-
-        # Validate new number is integer
-        try:
-            new_int = int(new_number)
-        except ValueError:
-            forms.alert("New rebar number must be an integer.", exitscript=False)
-            return
-
-        if current_number is None:
-            forms.alert("Please select a rebar number.", exitscript=False)
-            return
-
-        # Determine selected current as integer when possible
-        try:
-            current_int = int(str(current_number).strip())
-        except Exception:
-            current_int = None
-
-        # Find a matching rebar entry; prefer integer match
-        if current_int is not None:
-            selected_rebar_data = next(
-                (data for data in self.rebar_data if data['int'] == current_int),
-                None
-            )
-        else:
-            selected_rebar_data = next(
-                (data for data in self.rebar_data if
-                 data['padded'] == str(current_number) or data['number'] == str(current_number)),
-                None
-            )
-
-        if not selected_rebar_data:
-            forms.alert("Please select a valid rebar number.", exitscript=False)
-            return
-
-        # Call renumber function
-        success, message = renumber_rebar(doc, selected_partition,
-                                          current_int if current_int is not None else selected_rebar_data.get('number'),
-                                          new_int)
-
-        if success:
-            # Silent on success — refresh the number list to reflect changes
-            self.update_rebar_numbers()
+        partition = self.partition
+        if action == ACTION_CHANGE:
+            self.value_label.Text = "New number:"
+            self.New_Rebar_number.Text = str(self.index.next_free(partition)) if partition is not None else ""
+        elif action == ACTION_SWAP:
+            self.value_label.Text = "Swap with:"
             self.New_Rebar_number.Text = ""
+        elif action == ACTION_SHIFT:
+            self.value_label.Text = "Start at:"
+            ints = self.index.int_numbers(partition) if partition is not None else []
+            self.New_Rebar_number.Text = str(ints[0]) if ints else "1"
+        elif action == ACTION_MOVE:
+            n = len(self.move_ids)
+            self.pick_info.Text = "{} bar{} selected".format(n, "" if n == 1 else "s") if n else \
+                "None - pick bars or preselect them"
 
-            # Try to select the new number if present (use padded display)
-            digits = get_rebar_number_digits()
-            new_str = str(new_int).zfill(digits) if digits and digits > 0 else str(new_int)
-            items = list(self.Select_rebar_number.ItemsSource) if self.Select_rebar_number.ItemsSource else []
-            if new_str in items:
-                self.Select_rebar_number.SelectedItem = new_str
-        else:
-            # Show generic warning instead of exception message
-            forms.alert("Rebar number is existed. Please select another new rebar number.", exitscript=False)
+        self.apply_button.IsEnabled = not (action == ACTION_MOVE and not self.move_ids)
+        self.ok_button.IsEnabled = self.apply_button.IsEnabled
 
-    def window_close(self, sender, e):
-        self.DialogResult = False
+    def set_status(self, text, ok=True):
+        self.status_text.Text = text or ""
+        self.status_text.Foreground = Brushes.SeaGreen if ok else Brushes.Firebrick
+
+    # ---- events
+    def on_partition_changed(self, sender, e):
+        if not self._loading:
+            self.set_status("")
+            self.refresh()
+
+    def on_action_changed(self, sender, e):
+        if not self._loading:
+            self.set_status("")
+            self.update_action_ui()
+
+    def on_apply(self, sender, e):
+        self.do_apply()
+
+    def on_ok(self, sender, e):
+        if self.do_apply():
+            self.Close()
+
+    def on_close(self, sender, e):
         self.Close()
 
-def get_user_inputs():
-    # Create and show the form
-    input_form = InputForm()
-    result = input_form.show_dialog()
+    def on_pick(self, sender, e):
+        self.pick_requested = True
+        self.state = self.get_state()
+        self.Close()
 
-    # If user cancelled
-    if not result:
-        # Silent exit on cancel/close
-        script.exit()
+    def on_select(self, sender, e):
+        partition = self.partition
+        if self.action == ACTION_MOVE:
+            ids = self.move_ids
+        elif self.action in (ACTION_CHANGE, ACTION_SWAP) and self.number is not None:
+            ids = self.index.ids(partition, self.number)
+            other = parse_int(self.New_Rebar_number.Text) if self.action == ACTION_SWAP else None
+            if other is not None:
+                ids = ids + self.index.ids(partition, other)
+        else:
+            ids = self.index.ids(partition)
+        if not ids:
+            self.set_status("Nothing to select.", ok=False)
+            return
+        self.select_ids = ids
+        self.Close()
 
-    # Validate number inputs
-    try:
-        current_num = int(input_form.current_number)
-        new_num = int(input_form.new_number)
-    except ValueError:
-        forms.alert("Please enter valid numbers for current and new rebar numbers.", exitscript=True)
+    # ---- apply
+    def read_int(self, what):
+        value = parse_int(self.New_Rebar_number.Text)
+        if value is None or value < 1:
+            raise ActionError("{} must be a whole number of 1 or more.".format(what))
+        return value
 
-    return {
-        'partition': input_form.selected_partition,
-        'current_number': current_num,
-        'new_number': new_num
-    }
+    def selected_int_number(self):
+        number = self.number
+        if number is None:
+            raise ActionError("Select a rebar number.")
+        if not isinstance(number, int):
+            raise ActionError("'{}' is not numeric and cannot be renumbered.".format(number))
+        return number
 
-
-def renumber_rebar(doc, partition_name, num, new_num):
-    """
-    Attempt to renumber rebar using the Revit numbering schema API.
-    This will:
-      - Get the Rebar numbering schema
-      - Start a Transaction
-      - Call schema.ChangeNumber(partition_name, num, new_num)
-      - Commit on success or RollBack on failure
-    Returns (success: bool, message: str)
-    """
-    try:
-        schema = NumberingSchema.GetNumberingSchema(
-            doc,
-            NumberingSchemaTypes.StructuralNumberingSchemas.Rebar
-        )
-    except Exception as e:
-        return False, "Failed to obtain Rebar numbering schema: {}".format(e)
-
-    # Ensure we run the change inside a transaction
-    try:
-        t = Transaction(doc, "Renumber Rebar")
-        t.Start()
+    def do_apply(self):
+        partition = self.partition
+        action = self.action
+        keep = None
         try:
-            # ChangeNumber expects the partition name and numeric values
-            schema.ChangeNumber(partition_name, int(num), int(new_num))
-            t.Commit()
-            return True, "Renumbered {} -> {} in partition '{}'".format(num, new_num, partition_name)
-        except Exception as ex_change:
-            try:
-                if t.GetStatus() == TransactionStatus.Started:
-                    t.RollBack()
-            except Exception:
-                pass
-            return False, "ChangeNumber failed: {}".format(ex_change)
-    except Exception as ex_tx:
-        return False, "Transaction error: {}".format(ex_tx)
+            if partition is None:
+                raise ActionError("Select a partition.")
+
+            if action == ACTION_CHANGE:
+                old = self.selected_int_number()
+                new = self.read_int("New number")
+                if new == old:
+                    raise ActionError("New number is the same as the current number.")
+                if new in self.index.numbers(partition):
+                    count = len(self.index.ids(partition, new))
+                    if not forms.alert("Number {} is already used by {} bar{} in this partition.\n\n"
+                                       "Swap {} and {} instead?".format(
+                                           self.index.fmt(new), count, "" if count == 1 else "s",
+                                           self.index.fmt(old), self.index.fmt(new)),
+                                       yes=True, no=True):
+                        return False
+                    message = op_swap(self.index, partition, old, new)
+                else:
+                    message = op_change(self.index, partition, old, new)
+                keep = new
+
+            elif action == ACTION_SWAP:
+                a = self.selected_int_number()
+                b = self.read_int("Swap with")
+                if a == b:
+                    raise ActionError("Choose two different numbers.")
+                if b not in self.index.numbers(partition):
+                    raise ActionError("Number {} is not used in this partition - use '{}' instead."
+                                      .format(self.index.fmt(b), ACTION_CHANGE))
+                message = op_swap(self.index, partition, a, b)
+                keep = b
+
+            elif action == ACTION_GAPS:
+                message = op_gaps(self.index, partition)
+
+            elif action == ACTION_SHIFT:
+                message = op_shift(self.index, partition, self.read_int("Start number"))
+
+            elif action == ACTION_MOVE:
+                target = partition_key(self.target_partition.Text)
+                if not self.move_ids:
+                    raise ActionError("Pick or preselect the bars to move.")
+                if not target and DEFAULT_PARTITION_LABEL not in (self.target_partition.Text or ""):
+                    raise ActionError("Enter a target partition name.")
+                message = op_move(self.index, self.move_ids, target)
+                self.move_ids = []
+                self.state["partition"] = target
+            else:
+                raise ActionError("Unknown action.")
+
+        except ActionError as ex:
+            self.set_status(str(ex), ok=False)
+            return False
+        except Exception as ex:
+            self.set_status("Revit refused the change: {}".format(error_text(ex)), ok=False)
+            return False
+
+        # Rebuild the index from the model and keep the user's place.
+        self._loading = True
+        self.index = RebarIndex()
+        self.partition_keys = self.index.partitions()
+        self.Select_partition.ItemsSource = [partition_label(p) for p in self.partition_keys]
+        show_partition = self.state["partition"] if action == ACTION_MOVE else partition
+        if show_partition in self.partition_keys:
+            self.Select_partition.SelectedIndex = self.partition_keys.index(show_partition)
+        elif self.partition_keys:
+            self.Select_partition.SelectedIndex = 0
+        self._loading = False
+        self.refresh(keep_number=keep)
+        self.set_status(message, ok=True)
+        return True
 
 
-# Main execution - show form, validate and attempt renumber inside a retry loop.
-# If renumber fails, prompt user to select another new rebar number (re-open form).
-try:
+# --------------------------------------------------------------------------- main
+
+def main():
+    state = {}
     while True:
-        input_form = InputForm()
-        result = input_form.show_dialog()
+        form = RenumberForm(state)
+        form.show_dialog()
 
-        # If user cancelled, exit silently
-        if not result:
-            script.exit()
-
-        # If user pressed OK with blank new number, finish silently
-        if getattr(input_form, 'finish_requested', False):
-            break
-
-        # Validate number inputs
-        try:
-            current_num = int(input_form.current_number)
-            new_num = int(input_form.new_number)
-        except Exception:
-            forms.alert("Please enter valid integers for current and new rebar numbers.", exitscript=False)
-            # Re-open the form to let user correct values
+        if form.pick_requested:
+            state = form.state
+            try:
+                refs = uidoc.Selection.PickObjects(
+                    ObjectType.Element, RebarFilter(),
+                    "Pick rebar to move to another partition, then click Finish")
+                state["move_ids"] = [r.ElementId for r in refs]
+            except OperationCanceledException:
+                pass
+            state["action"] = ACTION_MOVE
             continue
 
-        # Attempt renumber
-        success, message = renumber_rebar(
-            doc,
-            input_form.selected_partition,
-            current_num,
-            new_num
-        )
+        if form.select_ids:
+            uidoc.Selection.SetElementIds(List[ElementId](form.select_ids))
+        break
 
-        if success:
-            # Silent on success — exit loop and finish
-            break
-        else:
-            # Ask user to select another new rebar number and re-open the form
-            forms.alert(" Rebar Number is exist. Please select another new rebar number.", exitscript=False)
-            # Loop will re-open the dialog
 
-except Exception as e:
-    forms.alert("An unexpected error occurred: {}".format(str(e)), exitscript=True)
+try:
+    main()
+except Exception as ex:
+    forms.alert("Rebar Renumber failed:\n{}".format(error_text(ex)))

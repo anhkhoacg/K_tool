@@ -1,38 +1,94 @@
-<!-- Analysis:
-     - Expected control names used by the script: Select_partition, Select_rebar_number, New_Rebar_number, cancel_button, apply_button, ok_button.
-     - Select_rebar_number is non-editable; New_Rebar_number has default "10".
-     - If you change control names or defaults, update the Python script accordingly.
+<!-- Rebar Renumber form.
+     Control names are used by Renumber-script.py: Select_partition, partition_info, action_combo,
+     row_number/Select_rebar_number, row_value/value_label/New_Rebar_number,
+     row_target/target_partition, row_pick/pick_info/pick_button, action_hint, status_text,
+     select_button, cancel_button, apply_button, ok_button.
 -->
-
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Rebar Renumber" Height="250" Width="400">
-    <Grid Margin="10">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
-        
-        <!-- Select Partition (row 0) -->
-        <TextBlock Grid.Row="0" Text="Select Partition:" Margin="0,0,0,5"/>
-        <ComboBox x:Name="Select_partition" Grid.Row="0" Margin="0,22,0,0"/>
+        Title="Rebar Renumber" Width="440" SizeToContent="Height"
+        ResizeMode="NoResize" WindowStartupLocation="CenterScreen">
+    <StackPanel Margin="12">
 
-        <!-- Select rebar number (row 1) - ComboBox non-editable -->
-        <TextBlock Grid.Row="1" Text="Select rebar number:" Margin="0,10,0,5"/>
-        <ComboBox x:Name="Select_rebar_number" Grid.Row="1" Margin="0,32,0,0" IsEditable="False"/>
+        <!-- Partition -->
+        <Grid Margin="0,0,0,2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="120"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="Partition:" VerticalAlignment="Center"/>
+            <ComboBox x:Name="Select_partition" Grid.Column="1"/>
+        </Grid>
+        <TextBlock x:Name="partition_info" Margin="120,0,0,10" Foreground="Gray" TextWrapping="Wrap"/>
 
-        <!-- New rebar number (row 2) -->
-        <TextBlock Grid.Row="2" Text="New rebar number:" Margin="0,10,0,5"/>
-        <TextBox x:Name="New_Rebar_number" Grid.Row="2" Margin="0,32,0,0" Text="10"/>
+        <!-- Action -->
+        <Grid Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="120"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="Action:" VerticalAlignment="Center"/>
+            <ComboBox x:Name="action_combo" Grid.Column="1"/>
+        </Grid>
+
+        <!-- Current number (Change / Swap) -->
+        <Grid x:Name="row_number" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="120"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="Rebar number:" VerticalAlignment="Center"/>
+            <ComboBox x:Name="Select_rebar_number" Grid.Column="1" IsEditable="False"/>
+        </Grid>
+
+        <!-- Numeric value (new number / swap with / start number) -->
+        <Grid x:Name="row_value" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="120"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="value_label" Text="New number:" VerticalAlignment="Center"/>
+            <TextBox x:Name="New_Rebar_number" Grid.Column="1" Padding="2"/>
+        </Grid>
+
+        <!-- Move to partition -->
+        <Grid x:Name="row_pick" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="120"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="Bars to move:" VerticalAlignment="Center"/>
+            <TextBlock x:Name="pick_info" Grid.Column="1" VerticalAlignment="Center"/>
+            <Button x:Name="pick_button" Grid.Column="2" Content="Pick bars..." Width="85"/>
+        </Grid>
+        <Grid x:Name="row_target" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="120"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="Target partition:" VerticalAlignment="Center"/>
+            <ComboBox x:Name="target_partition" Grid.Column="1" IsEditable="True"/>
+        </Grid>
+
+        <TextBlock x:Name="action_hint" Margin="0,2,0,6" Foreground="Gray" TextWrapping="Wrap" FontStyle="Italic"/>
+        <TextBlock x:Name="status_text" Margin="0,0,0,6" TextWrapping="Wrap" FontWeight="SemiBold"/>
 
         <!-- Buttons -->
-        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
-            <Button x:Name="cancel_button" Content="Cancel" Width="80" Margin="0,0,10,0"/>
-            <Button x:Name="apply_button" Content="Apply" Width="80" Margin="0,0,10,0"/>
-            <Button x:Name="ok_button" Content="OK" Width="80"/>
-        </StackPanel>
-    </Grid>
+        <Grid Margin="0,8,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <Button x:Name="select_button" Content="Select in model" Width="110"
+                    ToolTip="Close the dialog and select the bars this action applies to"/>
+            <StackPanel Grid.Column="2" Orientation="Horizontal">
+                <Button x:Name="cancel_button" Content="Close" Width="80" Margin="0,0,8,0" IsCancel="True"/>
+                <Button x:Name="apply_button" Content="Apply" Width="80" Margin="0,0,8,0"/>
+                <Button x:Name="ok_button" Content="OK" Width="80" IsDefault="True"
+                        ToolTip="Apply and close"/>
+            </StackPanel>
+        </Grid>
+    </StackPanel>
 </Window>
