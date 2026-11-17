@@ -125,23 +125,16 @@ class ModelElementFilter(ISelectionFilter):
         return False
 
 
-def get_elements():
-    ids = list(uidoc.Selection.GetElementIds())
-    if ids:
-        elements = [doc.GetElement(i) for i in ids]
-    else:
-        try:
-            with forms.WarningBar(title="Select elements to dimension, "
-                                        "then click Finish"):
-                refs = uidoc.Selection.PickObjects(
-                    ObjectType.Element, ModelElementFilter(),
-                    "Select elements to dimension")
-        except Exception:
-            script.exit()
-        elements = [doc.GetElement(r) for r in refs]
-    return [e for e in elements
-            if e is not None and e.Category is not None
-            and e.Category.CategoryType == DB.CategoryType.Model]
+def is_model(element):
+    return (element is not None and element.Category is not None
+            and element.Category.CategoryType == DB.CategoryType.Model)
+
+
+def get_preselected():
+    """Model elements selected before the button was clicked."""
+    return [e for e in (doc.GetElement(i)
+                        for i in uidoc.Selection.GetElementIds())
+            if is_model(e)]
 
 
 # ============================================================
@@ -414,10 +407,6 @@ if not chosen & set([OPT_H_CHAIN, OPT_H_OVERALL, OPT_V_CHAIN,
                 "Shift+Click the button to choose what to dimension.",
                 exitscript=True)
 
-elements = get_elements()
-if not elements:
-    forms.alert("No model elements selected.", exitscript=True)
-
 right = view.RightDirection.Normalize()
 up = view.UpDirection.Normalize()
 scale = max(view.Scale, 1)
@@ -436,83 +425,113 @@ created = []
 failures = []
 skipped = []
 
-with revit.Transaction("Auto Dim"):
-    for el in elements:
-        try:
-            faces, points = get_geometry(el)
-        except Exception as error:
-            skipped.append((el, "geometry: {}".format(error)))
-            continue
-        if not points:
-            skipped.append((el, "no geometry visible in this view"))
-            continue
 
-        us = [p.DotProduct(right) for p in points]
-        vs = [p.DotProduct(up) for p in points]
-        u_min, u_max = min(us), max(us)
-        v_min, v_max = min(vs), max(vs)
+def dim_element(el):
+    """Place all enabled dimensions on one element (inside a transaction)."""
+    try:
+        faces, points = get_geometry(el)
+    except Exception as error:
+        skipped.append((el, "geometry: {}".format(error)))
+        return
+    if not points:
+        skipped.append((el, "no geometry visible in this view"))
+        return
 
-        # Reference planes first so they win over coincident faces
-        h_raw, v_raw = [], []
-        if use_planes:
-            plane_refs = get_family_plane_refs(el, skip_weak)
-            if plane_refs:
-                try:
-                    h_raw, v_raw = measure_plane_stations(
-                        plane_refs, u_min, u_max, v_min, v_max)
-                except Exception as error:
-                    failures.append((el, "reference planes: {}".format(
-                        error)))
-            if planes_only and not h_raw and not v_raw:
-                skipped.append((el, "no usable reference planes "
-                                    "(not a family, or all set to "
-                                    "Not a Reference)"))
-        if not planes_only:
-            h_raw += face_stations(faces, right)
-            v_raw += face_stations(faces, up)
+    us = [p.DotProduct(right) for p in points]
+    vs = [p.DotProduct(up) for p in points]
+    u_min, u_max = min(us), max(us)
+    v_min, v_max = min(vs), max(vs)
 
-        h_st = merge_stations(h_raw, tol)   # positions along Right
-        v_st = merge_stations(v_raw, tol)   # positions along Up
+    # Reference planes first so they win over coincident faces
+    h_raw, v_raw = [], []
+    if use_planes:
+        plane_refs = get_family_plane_refs(el, skip_weak)
+        if plane_refs:
+            try:
+                h_raw, v_raw = measure_plane_stations(
+                    plane_refs, u_min, u_max, v_min, v_max)
+            except Exception as error:
+                failures.append((el, "reference planes: {}".format(
+                    error)))
+        if planes_only and not h_raw and not v_raw:
+            skipped.append((el, "no usable reference planes "
+                                "(not a family, or all set to "
+                                "Not a Reference)"))
+    if not planes_only:
+        h_raw += face_stations(faces, right)
+        v_raw += face_stations(faces, up)
 
-        # Keep dims clear of planes that sit outside the geometry
-        if h_st:
-            u_min = min(u_min, h_st[0][0])
-            u_max = max(u_max, h_st[-1][0])
-        if v_st:
-            v_min = min(v_min, v_st[0][0])
-            v_max = max(v_max, v_st[-1][0])
+    h_st = merge_stations(h_raw, tol)   # positions along Right
+    v_st = merge_stations(v_raw, tol)   # positions along Up
 
-        # ---- horizontal (dimension line parallel to Right) ----
-        h_base = v_max if h_sign > 0 else v_min
-        if len(h_st) >= 2:
-            level = 0
-            if OPT_H_CHAIN in chosen and len(h_st) > 2:
-                coord = h_base + h_sign * (first_off + level * spacing)
-                if try_dim(el, "H chain", h_st, "H", coord,
-                           created, failures):
-                    level += 1
-            if OPT_H_OVERALL in chosen:
-                coord = h_base + h_sign * (first_off + level * spacing)
-                try_dim(el, "H overall", [h_st[0], h_st[-1]], "H", coord,
-                        created, failures)
-        elif OPT_H_CHAIN in chosen or OPT_H_OVERALL in chosen:
-            skipped.append((el, "horizontal: fewer than 2 edge-on faces"))
+    # Keep dims clear of planes that sit outside the geometry
+    if h_st:
+        u_min = min(u_min, h_st[0][0])
+        u_max = max(u_max, h_st[-1][0])
+    if v_st:
+        v_min = min(v_min, v_st[0][0])
+        v_max = max(v_max, v_st[-1][0])
 
-        # ---- vertical (dimension line parallel to Up) ----
-        v_base = u_max if v_sign > 0 else u_min
-        if len(v_st) >= 2:
-            level = 0
-            if OPT_V_CHAIN in chosen and len(v_st) > 2:
-                coord = v_base + v_sign * (first_off + level * spacing)
-                if try_dim(el, "V chain", v_st, "V", coord,
-                           created, failures):
-                    level += 1
-            if OPT_V_OVERALL in chosen:
-                coord = v_base + v_sign * (first_off + level * spacing)
-                try_dim(el, "V overall", [v_st[0], v_st[-1]], "V", coord,
-                        created, failures)
-        elif OPT_V_CHAIN in chosen or OPT_V_OVERALL in chosen:
-            skipped.append((el, "vertical: fewer than 2 edge-on faces"))
+    # ---- horizontal (dimension line parallel to Right) ----
+    h_base = v_max if h_sign > 0 else v_min
+    if len(h_st) >= 2:
+        level = 0
+        if OPT_H_CHAIN in chosen and len(h_st) > 2:
+            coord = h_base + h_sign * (first_off + level * spacing)
+            if try_dim(el, "H chain", h_st, "H", coord,
+                       created, failures):
+                level += 1
+        if OPT_H_OVERALL in chosen:
+            coord = h_base + h_sign * (first_off + level * spacing)
+            try_dim(el, "H overall", [h_st[0], h_st[-1]], "H", coord,
+                    created, failures)
+    elif OPT_H_CHAIN in chosen or OPT_H_OVERALL in chosen:
+        skipped.append((el, "horizontal: fewer than 2 edge-on faces"))
+
+    # ---- vertical (dimension line parallel to Up) ----
+    v_base = u_max if v_sign > 0 else u_min
+    if len(v_st) >= 2:
+        level = 0
+        if OPT_V_CHAIN in chosen and len(v_st) > 2:
+            coord = v_base + v_sign * (first_off + level * spacing)
+            if try_dim(el, "V chain", v_st, "V", coord,
+                       created, failures):
+                level += 1
+        if OPT_V_OVERALL in chosen:
+            coord = v_base + v_sign * (first_off + level * spacing)
+            try_dim(el, "V overall", [v_st[0], v_st[-1]], "V", coord,
+                    created, failures)
+    elif OPT_V_CHAIN in chosen or OPT_V_OVERALL in chosen:
+        skipped.append((el, "vertical: fewer than 2 edge-on faces"))
+
+
+def pick_one():
+    """Pick a single element; None when the user presses Esc."""
+    try:
+        ref = uidoc.Selection.PickObject(
+            ObjectType.Element, ModelElementFilter(),
+            "Pick an element to dimension (Esc to finish)")
+    except Exception:
+        return None
+    return doc.GetElement(ref)
+
+
+preselected = get_preselected()
+if preselected:
+    # Elements selected before clicking: dimension them all at once
+    with revit.Transaction("Auto Dim"):
+        for el in preselected:
+            dim_element(el)
+else:
+    # Nothing selected: pick one element at a time, Esc to finish
+    with forms.WarningBar(title="Pick an element to dimension "
+                                "(Esc to finish)"):
+        while True:
+            el = pick_one()
+            if el is None:
+                break
+            with revit.Transaction("Auto Dim"):
+                dim_element(el)
 
 
 # ============================================================
@@ -538,5 +557,5 @@ if failures or skipped:
         output.print_table(
             [[output.linkify(e.Id), m] for e, m in skipped],
             columns=["Element", "Reason"], title="Skipped")
-elif not created:
+elif not created and preselected:
     forms.alert("No dimensions were created.")
